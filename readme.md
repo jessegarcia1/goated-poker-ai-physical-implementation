@@ -1,3 +1,29 @@
+# For Jesse :DD
+To run the poker game:
+- GUI: 
+  python -m scripts.poker_gui --models_folder flagship_models/first OR
+  python -m scripts.poker_gui --models_folder models/phase1   
+
+- CLI: 
+  python -m scripts.play --models-dir flagship_models/first OR
+  python -m scripts.play --models-dir models/phase1 OR
+  python -m scripts.play --physical-game True --button-pos 1
+
+Creating a new pkrs State:
+state = pkrs.State.from_seed(
+    n_players=num_players,
+    button=random.randint(0, num_players-1),
+    sb=1,
+    bb=2,
+    stake=200.0,
+    seed=random.randint(0, 10000)
+)
+
+'cocoa' Error Fix: 
+- pip uninstall PyQt5 PyQt5-sip PyQt5-Qt5 PyQt5-Qt5 -y
+- pip install PyQt5 
+- Do it all at once: pip uninstall PyQt5 PyQt5-sip PyQt5-Qt5 PyQt5-Qt5 -y; pip install PyQt5; python -m scripts.poker_gui --models_folder models/phase1
+
 # DeepCFR Poker AI
 
 Deep CFR for 6-player no-limit Texas Hold'em, built on top of the [`pokers`](https://github.com/Reinforcement-Poker/pokers) environment. The focus here is a training workflow you can actually run from source, not a polished black box.

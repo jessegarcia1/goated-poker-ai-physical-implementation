@@ -33,7 +33,7 @@ def card_to_string(card):
     
     return f"{ranks[int(card.rank)]}{suits[int(card.suit)]}"
 
-def display_game_state(state, player_id=0):
+def display_game_state(state, player_id=0, human_positions=None):
     """Display the current game state in a human-readable format."""
     print("\n" + "="*70)
     
@@ -62,7 +62,9 @@ def display_game_state(state, player_id=0):
     # Show all players' states
     print("\nPlayers:")
     for i, p in enumerate(state.players_state):
-        status = "YOU" if i == player_id else "AI"
+        status = "HUMAN" if i in human_positions else "AI"
+        if (i == player_id):
+            status = "YOU"
         active = "Active" if p.active else "Folded"
         print(f"Player {i} ({status}): ${p.stake:.2f} - Bet: ${p.bet_chips:.2f} - {active}")
     

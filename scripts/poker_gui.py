@@ -9,7 +9,7 @@ import argparse
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QPushButton, QLabel, QFrame, QSizePolicy, QSlider, QComboBox,
                             QSpinBox, QDoubleSpinBox, QMessageBox, QGridLayout, QGroupBox,
-                            QFileDialog, QFormLayout)
+                            QFileDialog, QFormLayout, QScrollArea)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap, QIcon, QFont, QColor, QPalette
 
@@ -17,8 +17,6 @@ from PyQt5.QtGui import QPixmap, QIcon, QFont, QColor, QPalette
 from src.opponent_modeling.deep_cfr_with_opponent_modeling import DeepCFRAgentWithOpponentModeling
 from src.core.deep_cfr import DeepCFRAgent
 from src.core.model import set_verbose
-from src.utils.logging import apply_action_with_logging
-from src.utils.actions import build_raise_action, preset_raise_action, raise_bounds, sanitize_action
 
 class CardWidget(QLabel):
     """Widget to display a playing card"""
@@ -41,44 +39,20 @@ class CardWidget(QLabel):
         self.update_display()
     
     def update_display(self):
-        """Update the card display"""
         if self.hidden:
             self.setText("🂠")
             return
-            
         if self.card is None:
             self.setText("")
             self.setStyleSheet("background-color: transparent; border: none;")
             return
-            
-        # Convert rank to text representation
-        rank_map = {
-            pkrs.CardRank.R2: "2",
-            pkrs.CardRank.R3: "3",
-            pkrs.CardRank.R4: "4",
-            pkrs.CardRank.R5: "5",
-            pkrs.CardRank.R6: "6",
-            pkrs.CardRank.R7: "7",
-            pkrs.CardRank.R8: "8",
-            pkrs.CardRank.R9: "9",
-            pkrs.CardRank.RT: "10",
-            pkrs.CardRank.RJ: "J",
-            pkrs.CardRank.RQ: "Q",
-            pkrs.CardRank.RK: "K",
-            pkrs.CardRank.RA: "A",
-        }
-        
-        # Convert suit to symbol with color
-        suit_map = {
-            pkrs.CardSuit.Clubs: ("♣", "black"),
-            pkrs.CardSuit.Diamonds: ("♦", "red"),
-            pkrs.CardSuit.Hearts: ("♥", "red"),
-            pkrs.CardSuit.Spades: ("♠", "black"),
-        }
-        
-        rank_text = rank_map[self.card.rank]
-        suit_text, color = suit_map[self.card.suit]
-        
+
+        rank_map = ["2","3","4","5","6","7","8","9","10","J","Q","K","A"]
+        suit_map = [("♣","black"),("♦","red"),("♥","red"),("♠","black")]
+
+        rank_text = rank_map[int(self.card.rank)]
+        suit_text, color = suit_map[int(self.card.suit)]
+
         self.setText(f"{rank_text}\n{suit_text}")
         self.setStyleSheet(f"""
             QLabel {{
@@ -357,17 +331,22 @@ class PokerTable(QWidget):
     def update_pot(self, amount):
         """Update the pot display"""
         self.pot_label.setText(f"Pot: ${amount:.2f}")
-    
+
     def update_stage(self, stage):
         """Update the game stage display"""
-        stage_names = {
-            pkrs.Stage.Preflop: "Preflop",
-            pkrs.Stage.Flop: "Flop",
-            pkrs.Stage.Turn: "Turn",
-            pkrs.Stage.River: "River",
-            pkrs.Stage.Showdown: "Showdown"
-        }
-        self.stage_label.setText(f"Stage: {stage_names.get(stage, str(stage))}")
+        if stage == pkrs.Stage.Preflop:
+            stage_name = "Preflop"
+        elif stage == pkrs.Stage.Flop:
+            stage_name = "Flop"
+        elif stage == pkrs.Stage.Turn:
+            stage_name = "Turn"
+        elif stage == pkrs.Stage.River:
+            stage_name = "River"
+        elif stage == pkrs.Stage.Showdown:
+            stage_name = "Showdown"
+        else:
+            stage_name = str(stage)
+        self.stage_label.setText(f"Stage: {stage_name}")
     
     def update_players(self, player_states, current_player, button_position, show_all_cards=False):
         """Update all player displays"""
@@ -587,11 +566,28 @@ class PokerGUI(QMainWindow):
         self.history_text = QLabel("Welcome to DeepCFR Poker AI! Models will be loaded automatically.")
         self.history_text.setWordWrap(True)
         self.history_text.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.history_text.setStyleSheet("background-color: #f5f5f5; padding: 8px; border-radius: 5px;")
-        self.history_text.setMinimumHeight(100)
-        
+        # Black background + readable text
+        self.history_text.setStyleSheet("""
+            QLabel {
+                background-color: black;
+                color: white;
+                padding: 8px;
+                border-radius: 5px;
+            }
+        """)
+
+        # Make text expand vertically
+        self.history_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Scroll area
+        self.history_scroll = QScrollArea()
+        self.history_scroll.setWidgetResizable(True)
+        self.history_scroll.setWidget(self.history_text)
+        self.history_scroll.setMinimumHeight(150)
+
         history_layout.addWidget(history_label)
-        history_layout.addWidget(self.history_text)
+        history_layout.addWidget(self.history_scroll)
+
         main_layout.addLayout(history_layout)
         
         self.central_widget.setLayout(main_layout)
@@ -774,18 +770,27 @@ class PokerGUI(QMainWindow):
         
         # Update raise amount limits
         if is_human_turn and pkrs.ActionEnum.Raise in self.state.legal_actions:
-            bounds = raise_bounds(self.state)
-            if bounds.can_raise:
-                self.table.update_raise_limits(bounds.min_raise, bounds.max_raise)
-                half_pot = max(self.state.pot * 0.5, bounds.min_raise)
-                full_pot = max(self.state.pot, bounds.min_raise)
-                self.table.half_pot_button.setEnabled(half_pot <= bounds.max_raise)
-                self.table.pot_button.setEnabled(full_pot <= bounds.max_raise)
-            else:
-                self.table.raise_button.setEnabled(False)
-                self.table.raise_amount.setEnabled(False)
-                self.table.half_pot_button.setEnabled(False)
-                self.table.pot_button.setEnabled(False)
+            player_state = self.state.players_state[self.human_player_id]
+            current_bet = player_state.bet_chips
+            available_stake = player_state.stake
+            
+            # Calculate call amount
+            call_amount = self.state.min_bet - current_bet
+            remaining_stake = available_stake - call_amount
+            
+            # Set min and max raise limits
+            min_raise = 2.0
+            max_raise = remaining_stake
+            
+            self.table.update_raise_limits(min_raise, max_raise)
+            
+            # Update buttons for raising half pot and pot
+            half_pot = max(self.state.pot * 0.5, min_raise)
+            full_pot = max(self.state.pot, min_raise)
+            
+            # Only enable if these amounts are within our stake
+            self.table.half_pot_button.setEnabled(half_pot <= max_raise)
+            self.table.pot_button.setEnabled(full_pot <= max_raise)
     
     def process_human_turn(self):
         """Process human player's turn"""
@@ -817,6 +822,7 @@ class PokerGUI(QMainWindow):
         
         # If it's the human's turn, let them play
         if current_player == self.human_player_id:
+            print("Processing First Human Turn")
             self.process_human_turn()
             return
             
@@ -836,8 +842,7 @@ class PokerGUI(QMainWindow):
             if isinstance(agent, DeepCFRAgentWithOpponentModeling):
                 action = agent.choose_action(self.state, opponent_id=current_player)
             else:
-                action = agent.choose_action(self.state)
-            action = sanitize_action(self.state, action)
+                action = agent.choose_action(self.state) # For DeepCFR agents, the choose_action func is in its file
                 
             # Log the action
             if action.action == pkrs.ActionEnum.Raise:
@@ -845,18 +850,16 @@ class PokerGUI(QMainWindow):
             else:
                 self.log_message(f"Player {current_player} {action.action}")
                 
-            # Apply the action with state validation
-            new_state, log_file, status = apply_action_with_logging(self.state, action)
-            if new_state is None:
-                self._handle_invalid_state(status, log_file)
-                return
-
-            self.state = new_state
+            # Apply the action with a delay
+            self.state = self.state.apply_action(action)
             self.update_ui()
             
             # Process end of hand or continue with next player
             if self.state.final_state:
                 self.handle_end_of_hand()
+            elif self.state.current_player == self.human_player_id:
+                print("Processing human turn")
+                self.process_human_turn()
             else:
                 # Schedule next AI turn or human turn
                 QTimer.singleShot(1000, self.process_ai_turn)
@@ -881,10 +884,7 @@ class PokerGUI(QMainWindow):
             return
             
         # Create the action
-        if action_enum == pkrs.ActionEnum.Raise:
-            action = build_raise_action(self.state, amount)
-        else:
-            action = pkrs.Action(action=action_enum, amount=amount)
+        action = pkrs.Action(action=action_enum, amount=amount)
         
         # Log the action
         if action_enum == pkrs.ActionEnum.Raise:
@@ -893,12 +893,7 @@ class PokerGUI(QMainWindow):
             self.log_message(f"You {action_enum}")
             
         # Apply the action
-        new_state, log_file, status = apply_action_with_logging(self.state, action)
-        if new_state is None:
-            self._handle_invalid_state(status, log_file)
-            return
-
-        self.state = new_state
+        self.state = self.state.apply_action(action)
         self.update_ui()
         
         # Process end of hand or continue with AI turns
@@ -917,21 +912,15 @@ class PokerGUI(QMainWindow):
     
     def handle_half_pot(self):
         """Handle half pot button press"""
-        action = preset_raise_action(self.state, "half_pot")
-        if action.action == pkrs.ActionEnum.Raise:
-            self.table.raise_amount.setValue(action.amount)
-            self.human_action(pkrs.ActionEnum.Raise, action.amount)
-        else:
-            self.human_action(action.action)
+        half_pot = max(self.state.pot * 0.5, 1.0)
+        self.table.raise_amount.setValue(min(half_pot, self.table.raise_amount.maximum()))
+        self.human_action(pkrs.ActionEnum.Raise, self.table.raise_amount.value())
     
     def handle_pot(self):
         """Handle pot button press"""
-        action = preset_raise_action(self.state, "pot")
-        if action.action == pkrs.ActionEnum.Raise:
-            self.table.raise_amount.setValue(action.amount)
-            self.human_action(pkrs.ActionEnum.Raise, action.amount)
-        else:
-            self.human_action(action.action)
+        full_pot = max(self.state.pot, 1.0)
+        self.table.raise_amount.setValue(min(full_pot, self.table.raise_amount.maximum()))
+        self.human_action(pkrs.ActionEnum.Raise, self.table.raise_amount.value())
     
     def handle_end_of_hand(self):
         """Handle the end of a hand"""
@@ -962,15 +951,6 @@ class PokerGUI(QMainWindow):
                 hand_str = f" with {card1} {card2}"
                 
             self.log_message(f"{player_type} {result_str}{hand_str}")
-
-    def _handle_invalid_state(self, status, log_file):
-        """Stop the current hand after an invalid state transition."""
-        details = f" Details logged to {log_file}." if log_file else ""
-        message = f"State status not OK ({status}).{details}"
-        self.log_message(message)
-        self.game_in_progress = False
-        self.table.set_action_buttons_enabled(False)
-        QMessageBox.warning(self, "Invalid Game State", message)
     
     def toggle_show_cards(self):
         """Toggle showing all cards"""
@@ -1021,14 +1001,55 @@ class RandomAgent:
             return pkrs.Action(action_enum)
         
         elif action_enum == pkrs.ActionEnum.Raise:
-            return preset_raise_action(
-                state,
-                random.choices(
-                    ["min", "half_pot", "pot", "all_in"],
-                    weights=[0.1, 0.4, 0.4, 0.1],
-                    k=1,
-                )[0],
-            )
+            player_state = state.players_state[state.current_player]
+            current_bet = player_state.bet_chips
+            available_stake = player_state.stake
+            
+            # Calculate call amount
+            call_amount = state.min_bet - current_bet
+            
+            # If player can't even call, go all-in
+            if available_stake <= call_amount:
+                return pkrs.Action(action_enum, available_stake)
+            
+            # Calculate remaining stake after calling
+            remaining_stake = available_stake - call_amount
+            
+            # If player can't raise at all, just call
+            if remaining_stake <= 0:
+                return pkrs.Action(pkrs.ActionEnum.Call)
+            
+            # Define minimum raise (typically 1 chip or the big blind)
+            min_raise = 1.0
+            if hasattr(state, 'bb'):
+                min_raise = state.bb
+            
+            # Choose a raise amount
+            raise_options = [
+                min_raise,  # Minimum raise
+                state.pot * 0.5,  # Half pot
+                state.pot,  # Full pot
+                remaining_stake  # All-in
+            ]
+            
+            # Filter to only affordable raises
+            valid_raises = [r for r in raise_options if r <= remaining_stake]
+            
+            # Choose a raise amount, with higher probability for reasonable bets
+            if not valid_raises:
+                return pkrs.Action(pkrs.ActionEnum.Call)
+                
+            # Weights: favor half-pot and pot-sized bets
+            weights = [0.1, 0.4, 0.4, 0.1]
+            weights = weights[:len(valid_raises)]
+            
+            # Normalize weights
+            total = sum(weights)
+            weights = [w/total for w in weights]
+            
+            # Choose amount
+            amount = random.choices(valid_raises, weights=weights, k=1)[0]
+            return pkrs.Action(action_enum, amount)
 
 
 def card_to_string(card):
@@ -1063,7 +1084,7 @@ if __name__ == "__main__":
     # Set up the application
     app = QApplication(sys.argv)
     window = PokerGUI()
-    
+       
     # Initialize with command line arguments if provided
     if args.models or args.models_folder:
         window.agents = [None] * 6

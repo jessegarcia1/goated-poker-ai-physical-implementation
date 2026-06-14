@@ -6,8 +6,8 @@ import numpy as np
 
 from pokers import Card, Action
 from src.core.deep_cfr import DeepCFRAgent
-from scripts.play import RandomAgent, get_human_action, display_game_state, get_action_description, log_game_error, card_to_string, set_verbose
-
+from scripts.play import RandomAgent, get_human_action, display_game_state, get_action_description, card_to_string, set_verbose
+from src.utils import apply_action_with_logging
 """
     To run: python -m scripts.play_physical 
     Players 4 and five are lowkey special
@@ -271,13 +271,16 @@ class PhysicalGame:
                     action = agent.choose_action(state) 
                     print(f"Player {current_player_pos} chose: {get_action_description(action)}")
 
-                rounded_action_amount = self.get_nearest_quarter_amount(action)
+                action_with_rounded_amount = self.get_nearest_quarter_amount(action)
+                
                 # Apply the action
-                new_state = state.apply_action(rounded_action_amount)
-                if new_state.status != pkrs.StateStatus.Ok:
-                    log_file = log_game_error(state, rounded_action_amount, f"State status not OK ({new_state.status})")
-                    print(f"WARNING: State status not OK ({new_state.status}). Details logged to {log_file}")
-                    break
+                new_state, log_file, status = apply_action_with_logging(
+                    state,
+                    action_with_rounded_amount
+                )
+                if new_state is None:
+                    print(f"WARNING: State status not OK ({status}). Details logged to {log_file}")
+                    break  # Skip this game in non-strict mode
                 state = new_state
 
             # Game is over, show results
