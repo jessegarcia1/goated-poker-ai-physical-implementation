@@ -3,11 +3,14 @@ import pokers as pkrs
 import random
 import os
 import numpy as np
+import math
 
-from pokers import Card, Action
+from pokers import Card, Action, State
 from src.core.deep_cfr import DeepCFRAgent
 from scripts.play import RandomAgent, get_human_action, display_game_state, get_action_description, card_to_string, set_verbose
 from src.utils import apply_action_with_logging
+from src.utils.actions import raise_bounds
+from scripts.playing_card_detection.detect_cards import detect_cards
 """
     To run: python -m scripts.play_physical 
     Players 4 and five are lowkey special
@@ -101,8 +104,10 @@ class PhysicalGame:
             seed=random.randint(0, 10000),
         )
 
-        # Manually overwrite player stakes, ai stakes will be tracked and updated.
+        # Manually overwrite player stakes. 
+        # Agent stakes will be tracked and updated.
         # Human stakes will always be the initial_stake becausee these cannot be tracked.
+        # TODO: Make it so humans can bet over inital_stake. 
         players = self.state.players_state # players is a copy of players_state
         for player_id, player_state in enumerate(players):
             if player_id in self.agent_positions:
@@ -115,58 +120,69 @@ class PhysicalGame:
 
         return self.state
 
-    def set_cards(self, prompt, count):
+    def set_cards(self, count: int, prompt: str=None, detect=True)-> list[Card] | None:
         """
         Prompt the user to enter cards from the physical table.
         
         Args:
+            count: How many cards to capture
             prompt: Description of which cards to enter
-            count: How many cards to enter
-        Returns:
-            List of parsed card dicts
-        """    
-        print(f"\n{prompt}")
-        print(f"Enter {count} card(s) using format: suit+rank (e.g. SA=Ace of Spades, HK=King of Hearts, C2=2 of Clubs, DT=10 of Diamonds)")
-        
-        while True:
-            raw_cards = input(f"Cards (space-separated): ").upper().strip().split()
-            if len(raw_cards) != count:
-                print(f"Please enter exactly {count} card(s).")
-                continue
+        """
+        # If there is a prompt collect card data manually, otherwise collect via camera.
+        if not detect:
+            print(f"\n{prompt}")
+            print(f"Enter {count} card(s) using format: suit+rank (e.g. SA=Ace of Spades, HK=King of Hearts, C2=2 of Clubs, DT=10 of Diamonds)")
             
-            if any(c is None or len(c) > 2 for c in raw_cards):
-                print("One or more cards were invalid. Try again.")
-                continue
-            
-            card_objects = [Card.from_string(c) for c in raw_cards]
-            # Show what was parsed for confirmation
-            readable = [f"{card_to_string(o)}" for o in card_objects]
-            confirm = input(f"Confirm: {' '.join(readable)}? (y/n): ").strip().lower()
-            if confirm == 'y':
-                print("\n")
-                return card_objects
+            while True:
+                raw_cards = input(f"Cards (space-separated): ").upper().strip().split()
+                if len(raw_cards) != count:
+                    print(f"Please enter exactly {count} card(s).")
+                    continue
+                
+                if any(c is None or len(c) > 2 for c in raw_cards):
+                    print("One or more cards were invalid. Try again.")
+                    continue
+                
+                card_objects = [Card.from_string(c) for c in raw_cards]
+                
+                # Show what was parsed for confirmation
+                readable = [f"{card_to_string(o)}" for o in card_objects]
+                confirm = input(f"Confirm: {' '.join(readable)}? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    print("\n")
+                    return card_objects
+        else:
+            print(f"\n{prompt}")
+            return detect_cards(count)
 
     def get_nearest_quarter_amount(self, action: Action):
         """
-        Rounds the amount of the action to the nearest .25 cents.
+        Rounds the amount of the action to the nearest .25 cents. Always rounds down
         """
         amount = action.amount
         decimal = amount - int(amount)
         divide = decimal / .25
         amount_of_quarters = round(divide)
-        nearest_quarter_amount = int(amount) + (amount_of_quarters * 3)
+        nearest_quarter_amount = int(amount) + (amount_of_quarters * .25)
+        
+        # make sure not raises go above max limit.
+        bounds = raise_bounds(state=self.state)
+        max_raise = bounds.max_raise
+        while nearest_quarter_amount > max_raise:
+            nearest_quarter_amount = nearest_quarter_amount -.25
+            
         action.amount = nearest_quarter_amount
+        print(f"Rounded {amount} to {nearest_quarter_amount}.")
         return action
         
-    def set_agent_hand(self, agent_position: int, state:pkrs.State, image: np.ndarray=None):
+    def set_agent_hand(self, agent_position: int, state:pkrs.State):
         """
         Sets the players_state of the agent's position to have the inputed cards
         
         Returns the state with the new agents's hand in place.
         """
         # grab cards from player input for now
-        # ai_hand = self.set_cards(f"Enter the AI's hole cards (Player {agent_position})", 2)
-        ai_hand = [Card.from_string("C5"), Card.from_string("CT")]
+        ai_hand = self.set_cards(2, f"Enter hand for agent position: {agent_position}")
         # Assign state of this agent to have inputed cards as hand
         players_copy = state.players_state # players is a copy, must reasign
         ai_state = players_copy[agent_position]
@@ -175,7 +191,7 @@ class PhysicalGame:
         players_copy[agent_position] = ai_state
         # Assign players back to original state
         state.players_state = players_copy
-            
+        
         return state
 
     def play_against_models_physical(self):
@@ -191,15 +207,16 @@ class PhysicalGame:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Using device: {device}")
         
-        base_path = 'models/mixed'
+        base_path = 'models/standard/mixed'
         model_paths = [
-            base_path + '/mixed_checkpoint_iter_1600.pt',
-            base_path + '/mixed_checkpoint_iter_1500.pt',
-            base_path + '/mixed_checkpoint_iter_1400.pt',
-            base_path + '/mixed_checkpoint_iter_1300.pt',
-            'models/selfplay' + '/selfplay_checkpoint_iter_2000.pt'
+            base_path + '/mixed_checkpoint_iter_33700.pt',
+            base_path + '/mixed_checkpoint_iter_33800.pt',
+            base_path + '/mixed_checkpoint_iter_33900.pt',
+            base_path + '/mixed_checkpoint_iter_400000.pt',
+            'models/standard/selfplay' + '/selfplay_checkpoint_iter_22000.pt'
         ]
         
+        # Load the agents
         self.load_agents(model_paths=model_paths)
 
         num_games = 0
@@ -243,19 +260,19 @@ class PhysicalGame:
                 new_stage = int(state.stage)
                 if new_stage != current_stage:
                     if new_stage == 1:  # Flop
-                        community_cards = self.set_cards("Enter the 3 FLOP cards", 3)
+                        community_cards = self.set_cards(3, "Enter the 3 FLOP cards", )
                     elif new_stage == 2:  # Turn
-                        turn = self.set_cards("Enter the TURN card", 1)
+                        turn = self.set_cards(1, "Enter the TURN card")
                         community_cards = community_cards + turn
                     elif new_stage == 3:  # River
-                        river = self.set_cards("Enter the RIVER card", 1)
+                        river = self.set_cards(1, "Enter the RIVER card")
                         community_cards = community_cards + river
                     current_stage = new_stage
 
-                current_player_pos = state.current_player
                 if (current_stage != 0):
                     state.public_cards = community_cards
                 
+                current_player_pos = state.current_player
                 # Display game state before human acts
                 if current_player_pos in self.human_positions:
                     display_game_state(state, current_player_pos, human_positions=self.human_positions)
@@ -278,10 +295,15 @@ class PhysicalGame:
                     state,
                     action_with_rounded_amount
                 )
-                if new_state is None:
+                if new_state is None: # TODO: Figure out why state is returned as None when all ais folded. Or dont ig.
                     print(f"WARNING: State status not OK ({status}). Details logged to {log_file}")
                     break  # Skip this game in non-strict mode
-                state = new_state
+                
+                # make sure self.state is always the current game state (not too neccessary ig)
+                self.state = new_state
+                state = self.state
+                
+                # **** Game Loop Over **** #
 
             # Game is over, show results
             print("\n--- Game Over ---")
@@ -306,15 +328,6 @@ class PhysicalGame:
                 player_type = "YOU" if i in self.human_positions else "AI"
                 print(f"Player {i} ({player_type}): ${p.reward:.2f}")
 
-            # Update player's stake
-            # game_profit = state.players_state[player_position].reward
-            # total_profit += game_profit
-            # player_stake += game_profit
-
-            # print(f"\nThis game: {'Won' if game_profit > 0 else 'Lost'} ${abs(game_profit):.2f}")
-            # print(f"Running total: ${total_profit:.2f}")
-            # print(f"Current balance: ${player_stake:.2f}")
-
         # Show overall statistics
         print("\n--- Overall Statistics ---")
         print(f"Games played: {num_games}")
@@ -322,5 +335,5 @@ class PhysicalGame:
         print(f"Average profit per game: ${total_profit/num_games if num_games > 0 else 0:.2f}")
         print(f"Final balance: ${player_stake:.2f}")
         
-# Same as default settings
+# $10 stake, 25 cent chips
 PhysicalGame(n_players=6, button_pos=1, initial_stake=10.0, num_human_players=3, num_agents=3, small_blind=.25, big_blind=.50).play_against_models_physical()
