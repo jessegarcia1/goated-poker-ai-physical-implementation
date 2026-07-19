@@ -1,28 +1,62 @@
 # For Jesse :DD
-To run the poker game:
-- GUI: 
-  python -m scripts.poker_gui --models_folder flagship_models/first OR
-  python -m scripts.poker_gui --models_folder models/phase1   
 
-- CLI: 
+To run the poker game:
+
+- GUI:
+  python -m scripts.poker_gui --models_folder flagship_models/first OR
+  python -m scripts.poker_gui --models_folder models/phase1
+
+- CLI:
   python -m scripts.play --models-dir flagship_models/first OR
   python -m scripts.play --models-dir models/phase1 OR
   python -m scripts.play --physical-game True --button-pos 1
 
 Creating a new pkrs State:
 state = pkrs.State.from_seed(
-    n_players=num_players,
-    button=random.randint(0, num_players-1),
-    sb=1,
-    bb=2,
-    stake=200.0,
-    seed=random.randint(0, 10000)
+n_players=num_players,
+button=random.randint(0, num_players-1),
+sb=1,
+bb=2,
+stake=200.0,
+seed=random.randint(0, 10000)
 )
 
-'cocoa' Error Fix: 
+'cocoa' Error Fix:
+
 - pip uninstall PyQt5 PyQt5-sip PyQt5-Qt5 PyQt5-Qt5 -y
-- pip install PyQt5 
+- pip install PyQt5
 - Do it all at once: pip uninstall PyQt5 PyQt5-sip PyQt5-Qt5 PyQt5-Qt5 -y; pip install PyQt5; python -m scripts.poker_gui --models_folder models/phase1
+
+Step 1:
+python -m src.training.train \
+ --iterations 20000 \
+ --traversals 200 \
+ --save-dir models/standard/4_player/phase1_20k \
+ --log-dir logs/standard/4_player/phase1_20k\
+ --num-opponents 3 
+
+Step 2:
+python -m src.training.train \
+ --checkpoint models/standard/4_player/phase1_20k/checkpoint_iter_20000.pt \
+ --self-play \
+ --iterations 10000 \
+ --traversals 400 \
+ --save-dir models/standard/4_player/selfplay_from_20000 \
+ --log-dir logs/standard/4_player/selfplay_from_3000 \
+ --num-opponents 3
+
+Step 3:
+python -m src.training.train \
+ --checkpoint models/standard/4_player/selfplay_from_20000/selfplay_checkpoint_iter_30000.pt \
+ --mixed \
+ --checkpoint-dir models/standard/4_player \
+ --model-prefix "\*checkpoint_iter*" \
+ --refresh-interval 1000 \
+ --num-opponents 3 \
+ --iterations 10000 \
+ --traversals 400 \
+ --log-dir logs/standard/4_player/mixed \
+ --save-dir models/standard/4_player/mixed
 
 # DeepCFR Poker AI
 
