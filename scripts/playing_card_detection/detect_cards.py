@@ -6,8 +6,7 @@
 
 import math
 import sys
-from ultralytics import YOLO
-import cv2
+import onnxruntime as ort
 from pokers import Card
 
 DEFAULT_MODEL = "synthetic"
