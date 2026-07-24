@@ -10,7 +10,7 @@ from pathlib import Path
 import pokers as pkrs
 import pytest
 
-from src.utils.logging import apply_action_with_logging
+from src.utils.logging_utilities import apply_action_with_logging
 
 
 SCENARIO_CASES = [

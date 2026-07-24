@@ -1,18 +1,16 @@
-import torch
 import pokers as pkrs
 import random
 import os
-import numpy as np
-import math
+from pokers import Card, Action
 
-from pokers import Card, Action, State
-from src.core.deep_cfr import DeepCFRAgent
-from scripts.play import RandomAgent, get_human_action, display_game_state, get_action_description, card_to_string, set_verbose
+from src.core.deep_cfr_raspberry_pi import DeepCFRAgentRaspberryPi
+from scripts.play_helpers import RandomAgent, get_human_action, display_game_state, get_action_description, card_to_string
 from src.utils import apply_action_with_logging
 from src.utils.actions import raise_bounds
+from src.utils.raspi import get_serial_info
 from scripts.playing_card_detection.detect_cards import detect_cards
 """
-    To run: python -m scripts.play_physical 
+    To run: python3 -m scripts.play_physical 
     Players 4 and five are lowkey special
 """
 class PhysicalGame:
@@ -25,15 +23,11 @@ class PhysicalGame:
         n_players: int,
         button_pos: int,
         initial_stake: float,
-        num_human_players: int,
         num_agents: int,
         small_blind: float = 1.0,
         big_blind: float = 2.0,
         verbose: bool = False,
     ):
-        if num_human_players + num_agents != n_players:
-            raise ValueError("num_human_players + num_agents must equal n_players")
-
         if n_players <= 1:
             raise ValueError("Need at least 2 players")
         
@@ -43,14 +37,14 @@ class PhysicalGame:
         self.small_blind = small_blind
         self.big_blind = big_blind
         self.verbose = verbose
-        self.num_human_players = num_human_players
         self.num_agents = num_agents
-
+        
+        self.num_human_players = n_players - num_agents
         # Humans occupy first N seats by default
-        self.human_positions = list(range(num_human_players))
+        self.human_positions = list(range(self.num_human_players))
         # Agents occupy remaining seats
         self.agent_positions = list(
-            range(num_human_players, n_players)
+            range(self.num_human_players, n_players)
         )
 
         # Bankroll tracking
@@ -61,11 +55,6 @@ class PhysicalGame:
         
         self.state = None
         self.agents = [None] * n_players
-        self.device = (
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-
-        print(f"Using device: {self.device}")
 
     def load_agents(self, model_paths):
         """
@@ -74,13 +63,12 @@ class PhysicalGame:
         print(f"Selected {len(model_paths)} models for this game:")
         for model_idx, path in enumerate(model_paths):
             print(f"  Model {model_idx+1}: {os.path.basename(path)}")
-        set_verbose(self.verbose)
 
         # model_idx is its index in the model_paths list, pos is its position at the table
         for model_idx, pos in enumerate(self.agent_positions):
             if model_idx < len(model_paths):
                 try:
-                    agent = DeepCFRAgent(player_id=pos, num_players=self.n_players, device=self.device)
+                    agent = DeepCFRAgentRaspberryPi(player_id=pos, num_players=self.n_players, device=self.device)
                     agent.load_model(model_paths[model_idx])
                     self.agents[pos] = agent
                     print(f"Loaded model for Player {pos}: {os.path.basename(model_paths[model_idx])}")
@@ -203,9 +191,6 @@ class PhysicalGame:
             - Set each AI's initial stake
             - Set number of players and how many AI models there will be.
         """
-
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {device}")
         
         base_path = 'models/standard/mixed'
         model_paths = [
@@ -336,4 +321,14 @@ class PhysicalGame:
         print(f"Final balance: ${player_stake:.2f}")
         
 # $10 stake, 25 cent chips
-PhysicalGame(n_players=6, button_pos=1, initial_stake=10.0, num_human_players=3, num_agents=3, small_blind=.25, big_blind=.50).play_against_models_physical()
+if __name__ == "__main__":
+    game_state = get_serial_info()
+    
+    PhysicalGame(
+        n_players=game_state.num_players, 
+        button_pos=game_state.button_pos, 
+        initial_stake=game_state.initial_stake, 
+        num_agents=game_state.num_agents, 
+        small_blind=game_state.small_blind, 
+        big_blind=game_state.big_blind
+    ).play_against_models_physical()

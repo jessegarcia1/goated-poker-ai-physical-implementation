@@ -19,7 +19,7 @@ import torch
 from src.agents.random_agent import RandomAgent
 from src.core.deep_cfr import DeepCFRAgent
 from src.utils.checkpoints import find_checkpoints
-from src.utils.logging import apply_action_with_logging
+from src.utils.logging_utilities import apply_action_with_logging
 
 
 def set_reproducible_seed(seed: int) -> None:
