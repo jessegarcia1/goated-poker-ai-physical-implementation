@@ -10,7 +10,7 @@ from tqdm import tqdm
 from src.core.deep_cfr import DeepCFRAgent, traverse_agent_turn
 from src.core.model import set_verbose
 from src.utils.checkpoints import find_checkpoints, load_checkpoint, standard_checkpoint_state
-from src.utils.logging_utilities import apply_action_with_logging
+from src.utils.logging import apply_action_with_logging
 from src.utils.settings import STRICT_CHECKING, set_strict_checking
 from src.agents.random_agent import RandomAgent
 

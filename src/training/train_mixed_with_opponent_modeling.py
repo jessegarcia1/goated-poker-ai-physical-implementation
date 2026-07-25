@@ -14,7 +14,7 @@ from src.opponent_modeling.deep_cfr_with_opponent_modeling import DeepCFRAgentWi
 from src.core.model import set_verbose
 from src.agents.random_agent import RandomAgent
 from src.utils.checkpoints import checkpoint_uses_opponent_modeling_state, find_checkpoints, load_checkpoint
-from src.utils.logging_utilities import apply_action_with_logging
+from src.utils.logging import apply_action_with_logging
 from src.utils.settings import STRICT_CHECKING, set_strict_checking
 from src.utils.actions import sanitize_action
 

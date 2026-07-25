@@ -23,7 +23,7 @@ from src.utils.checkpoints import (
 )
 from src.agents.random_agent import RandomAgent
 from src.utils.settings import STRICT_CHECKING
-from src.utils.logging_utilities import apply_action_with_logging
+from src.utils.logging import apply_action_with_logging
 
 class EnhancedPokerNetwork(nn.Module):
     """

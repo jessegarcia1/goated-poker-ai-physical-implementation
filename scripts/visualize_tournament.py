@@ -7,7 +7,7 @@ import os
 import time
 import argparse
 from src.core.deep_cfr import DeepCFRAgent
-from src.utils.logging_utilities import apply_action_with_logging
+from src.utils.logging import apply_action_with_logging
 from src.utils.checkpoints import load_checkpoint
 from collections import defaultdict
 import pandas as pd
