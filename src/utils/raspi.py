@@ -6,6 +6,9 @@ import numpy as np
 import serial
 from dataclasses import dataclass
 
+"""
+    How to run: run with sudo
+"""
 def capture_photo(camera_num: int, file_name: str=None):
     """
     Captures an image with the camera of the chosen number. 
@@ -61,6 +64,5 @@ def get_serial_info(port='/dev/ttyACM0', baudrate=9600):
 
 
 if __name__ == '__main__':
-    state = get_serial_info()
-    print(state)
+    capture_photo(0, "test12.jpg")
     
