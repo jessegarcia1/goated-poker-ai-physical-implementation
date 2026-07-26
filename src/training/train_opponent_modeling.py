@@ -52,8 +52,8 @@ def train_against_checkpoint_with_opponent_modeling(
     checkpoint_path,
     additional_iterations=1000,
     traversals_per_iteration=200,
-    save_dir="models_om",
-    log_dir="logs/deepcfr_om_selfplay",
+    save_dir="models/opponent_modeling/selfplay",
+    log_dir="logs/opponent_modeling/selfplay",
     player_id=0,
     verbose=False,
 ):
@@ -131,7 +131,9 @@ def train_against_checkpoint_with_opponent_modeling(
 
     final_iteration = starting_iteration + additional_iterations - 1
     for iteration in range(starting_iteration, final_iteration + 1):
+        local_iteration = iteration - starting_iteration + 1
         learning_agent.iteration_count = iteration
+        learning_agent.local_training_iteration = local_iteration
         start_time = time.time()
 
         print(f"Self-play iteration {iteration}/{final_iteration}")
@@ -146,13 +148,15 @@ def train_against_checkpoint_with_opponent_modeling(
                 seed=random.randint(0, 10000),
             )
             try:
-                learning_agent.cfr_traverse(state, iteration, opponents)
+                learning_agent.cfr_traverse(state, local_iteration, opponents)
             except Exception as exc:
                 print(f"Error during traversal: {exc}")
                 if notifier and traversal % 50 == 0:
                     notifier.send_message(
                         f"⚠️ <b>SELF-PLAY TRAVERSAL ERROR</b>\nIteration: {iteration}\nError: {exc}"
                     )
+                writer.flush()
+                raise
 
         traversal_time = time.time() - start_time
         writer.add_scalar("Time/Traversal", traversal_time, iteration)
@@ -259,12 +263,12 @@ def main(argv=None):
     parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
     parser.add_argument("--iterations", type=int, default=1000, help="Number of CFR iterations")
     parser.add_argument("--traversals", type=int, default=200, help="Traversals per iteration")
-    parser.add_argument("--save-dir", type=str, default="models_om", help="Directory to save models")
-    parser.add_argument("--log-dir", type=str, default="logs/deepcfr_om", help="Directory for logs")
+    parser.add_argument("--save-dir", type=str, default="models/opponent_modeling/phase1", help="Directory to save models")
+    parser.add_argument("--log-dir", type=str, default="logs/opponent_modeling/phase1", help="Directory for logs")
     parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint path")
     parser.add_argument("--self-play", action="store_true", help="Train against a fixed checkpoint opponent")
     parser.add_argument("--mixed", action="store_true", help="Train against a checkpoint pool")
-    parser.add_argument("--checkpoint-dir", type=str, default="models_om", help="Directory containing checkpoint models")
+    parser.add_argument("--checkpoint-dir", type=str, default="models/opponent_modeling", help="Directory containing checkpoint models")
     parser.add_argument(
         "--model-prefix",
         type=str,
@@ -275,6 +279,7 @@ def main(argv=None):
     parser.add_argument("--num-opponents", type=int, default=5, help="Number of checkpoint opponents to select")
     parser.add_argument("--strict", action="store_true", help="Raise exceptions for invalid game states")
     parser.add_argument("--progress-interval", type=int, default=100, help="Print compact training summaries every N iterations; set 0 to disable")
+    parser.add_argument("--allow-random-fallback", action="store_true", help="Use random opponents when a mixed checkpoint pool is empty")
     args = parser.parse_args(argv)
 
     set_strict_checking(args.strict)
@@ -294,6 +299,7 @@ def main(argv=None):
             model_prefix=args.model_prefix,
             verbose=args.verbose,
             checkpoint_path=args.checkpoint,
+            allow_random_fallback=args.allow_random_fallback,
         )
         agent, adv_losses, strat_losses, om_losses, profits, profits_vs_checkpoints = result
     elif args.checkpoint and args.self_play:
