@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import uvicorn
 from pokers import State
 
@@ -7,20 +7,18 @@ from scripts.playing_card_detection.detection_utils import detect_cards
 from src.core.deep_cfr import DeepCFRAgent
 
 
-# how to run: run file
+# how to run: python3 -m src.backend.endpoints
 # to expose server to all computers on the network: below in code
-
-# how to set interpreter: run 'source ./.venv/bin/activate' in command line. 
-# this makes sure packages get installed into this venv (and not another or global) by changing the path variables
-# then select interpreter in vscode: ./venv/bin/python3
-
 app = FastAPI()
-
 
 class CardImage(BaseModel):
   image_as_list: list
 
+# Since State from pokers is a class built in another language pydantic cannot parse it and
+# does not know how to build it. So I might have to pass in each param to a state and build
+# it here.
 class GameState(BaseModel):
+  model_config = ConfigDict(arbitrary_types_allowed=True)
   game_state: State
 
 @app.get("/is-backend-up", status_code=200)
@@ -49,4 +47,4 @@ def choose_action(data: GameState):
 
 # used to expose backend to other local guys
 if __name__ == "__main__":
-  uvicorn.run("endpoints:app", host="0.0.0.0", port=8000)
+  uvicorn.run(app=app, host="0.0.0.0", port=8000)
