@@ -9,6 +9,7 @@ import glob
 from src.core.deep_cfr import DeepCFRAgent
 from src.core.model import set_verbose
 from src.utils import apply_action_with_logging
+from src.utils import settings
 from src.utils.actions import build_raise_action, preset_raise_action, raise_bounds
 from src.utils.settings import STRICT_CHECKING, set_strict_checking
 from scripts.play_helpers import get_action_description, card_to_string, display_game_state, get_human_action
@@ -153,7 +154,7 @@ def play_against_models(models_dir=None, model_pattern="*.pt", num_models=5,
             new_state, log_file, status = apply_action_with_logging(
                 state,
                 action,
-                strict=STRICT_CHECKING,
+                strict=settings.is_strict_checking(),
             )
             if new_state is None:
                 print(f"WARNING: State status not OK ({status}). Details logged to {log_file}")

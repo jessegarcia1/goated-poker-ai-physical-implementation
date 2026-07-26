@@ -9,70 +9,48 @@ import sys
 from tqdm import tqdm
 from src.core.deep_cfr import DeepCFRAgent, traverse_agent_turn
 from src.core.model import set_verbose
+from src.utils import settings
+from src.utils.agents import CheckpointAgent
 from src.utils.checkpoints import find_checkpoints, load_checkpoint, standard_checkpoint_state
 from src.utils.logging import apply_action_with_logging
-from src.utils.settings import STRICT_CHECKING, set_strict_checking
+from src.utils.evaluation import evaluate_agent_matchup, write_evaluation_diagnostics
+from src.utils.training_diagnostics import (
+    collect_training_diagnostics,
+    format_training_diagnostics,
+    write_training_diagnostics,
+)
+from src.utils.traversal_diagnostics import (
+    TraversalFailure,
+    fail_traversal,
+    failure_context,
+)
+from src.utils.settings import set_strict_checking
 from src.agents.random_agent import RandomAgent
 
-def evaluate_against_random(agent, num_games=500, num_players=6):
+def evaluate_against_random(
+    agent,
+    num_games=500,
+    num_players=6,
+    writer=None,
+    iteration=None,
+    metric_prefix="Evaluation/Random",
+):
     """Evaluate the trained agent against random opponents."""
     random_agents = [RandomAgent(i) for i in range(num_players)]
-    total_profit = 0
-    completed_games = 0
-    
-    for game in range(num_games):
-        try:
-            # Create a new poker game
-            state = pkrs.State.from_seed(
-                n_players=num_players,
-                button=game % num_players,  # Rotate button for fairness
-                sb=1,
-                bb=2,
-                stake=200.0,
-                seed=game
-            )
-            
-            # Play until the game is over
-            while not state.final_state:
-                current_player = state.current_player
-                
-                if current_player == agent.player_id:
-                    action = agent.choose_action(state)
-                else:
-                    action = random_agents[current_player].choose_action(state)
-                
-                # Apply the action with conditional status check
-                new_state, log_file, status = apply_action_with_logging(
-                    state,
-                    action,
-                    strict=STRICT_CHECKING,
-                )
-                if new_state is None:
-                    print(f"WARNING: State status not OK ({status}) in game {game}. Details logged to {log_file}")
-                    break  # Skip this game in non-strict mode
-                
-                state = new_state
-            
-            # Only count completed games
-            if state.final_state:
-                # Add the profit for this game
-                profit = state.players_state[agent.player_id].reward
-                total_profit += profit
-                completed_games += 1
-                
-        except Exception as e:
-            if STRICT_CHECKING:
-                raise  # Re-raise the exception in strict mode
-            else:
-                print(f"Error in game {game}: {e}")
-                # Continue with next game in non-strict mode
-    
-    # Return average profit only for completed games
-    if completed_games == 0:
-        print("WARNING: No games completed during evaluation!")
-        return 0
-    
-    return total_profit / completed_games
+    metrics = evaluate_agent_matchup(
+        agent,
+        random_agents,
+        num_games=num_games,
+        seed_start=0,
+        num_players=num_players,
+        strict=True,
+        label="evaluation vs random",
+        print_warnings=True,
+    )
+    write_evaluation_diagnostics(writer, metrics, iteration, metric_prefix)
+    if metrics["completed_games"] == 0:
+        raise RuntimeError("No games completed during evaluation vs random")
+    return metrics["avg_profit"]
 
 
 class _PerspectiveAgentWrapper:
@@ -91,8 +69,18 @@ def _cfr_traverse_with_opponents(agent, state, iteration, opponent_agents, depth
     max_depth = 1000
     if depth > max_depth:
         if verbose:
-            print(f"WARNING: Max recursion depth reached ({max_depth}). Returning zero value.")
-        return 0
+            print(f"WARNING: Max recursion depth reached ({max_depth}). Raising traversal failure.")
+        fail_traversal(
+            agent,
+            "max_depth",
+            **failure_context(
+                state=state,
+                depth=depth,
+                iteration=iteration,
+                player_id=agent.player_id,
+                message=f"Max recursion depth reached ({max_depth})",
+            ),
+        )
 
     if state.final_state:
         return state.players_state[agent.player_id].reward
@@ -121,13 +109,23 @@ def _cfr_traverse_with_opponents(agent, state, iteration, opponent_agents, depth
         if opponent_agent is None:
             if verbose:
                 print(f"WARNING: No opponent agent for position {current_player}")
-            return 0
+            fail_traversal(
+                agent,
+                "opponent_missing",
+                **failure_context(
+                    state=state,
+                    depth=depth,
+                    iteration=iteration,
+                    player_id=agent.player_id,
+                    message=f"No opponent agent for position {current_player}",
+                ),
+            )
 
         action = opponent_agent.choose_action(state)
         new_state, log_file, status = apply_action_with_logging(
             state,
             action,
-            strict=STRICT_CHECKING,
+            strict=settings.is_strict_checking(),
         )
         if new_state is None:
             if verbose:
@@ -136,22 +134,126 @@ def _cfr_traverse_with_opponents(agent, state, iteration, opponent_agents, depth
                     f"Status: {status}"
                 )
                 print(f"Details logged to {log_file}")
-            return 0
+            fail_traversal(
+                agent,
+                "opponent_invalid_action",
+                **failure_context(
+                    state=state,
+                    depth=depth,
+                    iteration=iteration,
+                    player_id=agent.player_id,
+                    action=action,
+                    status=status,
+                    log_file=log_file,
+                ),
+            )
 
         return _cfr_traverse_with_opponents(
             agent, new_state, iteration, opponent_agents, depth + 1, verbose
         )
+    except TraversalFailure:
+        raise
     except Exception as exc:
         if verbose:
             print(f"ERROR in opponent agent traversal: {exc}")
-        if STRICT_CHECKING:
-            raise
-        return 0
+        fail_traversal(
+            agent,
+            "opponent_exception",
+            exception=exc,
+            **failure_context(
+                state=state,
+                depth=depth,
+                iteration=iteration,
+                player_id=agent.player_id,
+                message=str(exc),
+            ),
+        )
+
+
+def _should_save_checkpoint(iteration, final_iteration, checkpoint_interval):
+    return iteration == final_iteration or (
+        checkpoint_interval > 0 and iteration % checkpoint_interval == 0
+    )
+
+
+def _should_evaluate(iteration, final_iteration, evaluation_interval):
+    return iteration == final_iteration or (
+        evaluation_interval > 0 and iteration % evaluation_interval == 0
+    )
+
+
+def _set_training_iterations(agent, absolute_iteration, local_iteration):
+    agent.iteration_count = absolute_iteration
+    agent.local_training_iteration = local_iteration
+
+
+def _record_training_diagnostics(writer, agent, iteration):
+    diagnostics = collect_training_diagnostics(agent, reset_traversal=True)
+    write_training_diagnostics(writer, diagnostics, iteration)
+    return diagnostics
+
+
+def _record_traversal_failure_diagnostics(writer, agent, iteration):
+    diagnostics = _record_training_diagnostics(writer, agent, iteration)
+    print(f"Traversal failure diagnostics: {format_training_diagnostics(diagnostics)}")
+    recent_failures = diagnostics["traversal"].get("recent_failures", [])
+    if recent_failures:
+        print(f"Last traversal failure: {recent_failures[-1]}")
+    if writer is not None:
+        writer.flush()
+
+
+def _pool_checkpoint_save_path(checkpoint_dir, pool_save_prefix, iteration):
+    return os.path.join(checkpoint_dir, f"{pool_save_prefix}{iteration}.pt")
+
+
+def _select_mixed_checkpoint_opponents(
+    checkpoint_dir,
+    opponent_model_pattern,
+    num_opponents,
+    device,
+    player_id=0,
+    num_players=6,
+    allow_random_fallback=False,
+):
+    checkpoint_files = [str(path) for path in find_checkpoints(checkpoint_dir, opponent_model_pattern)]
+    opponent_seats = [pos for pos in range(num_players) if pos != player_id]
+
+    if not checkpoint_files:
+        message = (
+            f"No checkpoint files found matching '{opponent_model_pattern}' "
+            f"in {checkpoint_dir}"
+        )
+        if not allow_random_fallback:
+            raise ValueError(message)
+        print(f"WARNING: {message}. Using random fallback opponents.")
+        return [RandomAgent(i) if i != player_id else None for i in range(num_players)], []
+
+    selected_count = min(max(0, num_opponents), len(checkpoint_files), len(opponent_seats))
+    selected_files = random.sample(checkpoint_files, selected_count)
+    print(f"Selected checkpoints: {[os.path.basename(f) for f in selected_files]}")
+
+    opponent_agents = [None] * num_players
+    for pos, checkpoint_file in zip(opponent_seats, selected_files):
+        opponent_agents[pos] = CheckpointAgent(
+            player_id=pos,
+            model_path=checkpoint_file,
+            device=device,
+            sanitize_actions=True,
+        )
+
+    for pos in opponent_seats:
+        if opponent_agents[pos] is None:
+            opponent_agents[pos] = RandomAgent(pos)
+
+    return opponent_agents, selected_files
+
 
 def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200, 
                    num_players=6, player_id=0, save_dir="models", 
                    log_dir="logs/deepcfr", verbose=False, debug_training=False,
-                   progress_interval=100):
+                   progress_interval=100, checkpoint_interval=1000,
+                   evaluation_interval=10, random_eval_games=500):
     """
     Train a Deep CFR agent in a 6-player No-Limit Texas Hold'em game
     against 5 random opponents.
@@ -183,13 +285,17 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
     
     # ADDED: Initial evaluation before training begins
     print("Initial evaluation...")
-    initial_profit = evaluate_against_random(agent, num_games=500, num_players=num_players)
+    initial_profit = evaluate_against_random(
+        agent,
+        num_games=random_eval_games,
+        num_players=num_players,
+        writer=writer,
+        iteration=0,
+        metric_prefix="Evaluation/Random",
+    )
     profits.append(initial_profit)
     print(f"Initial average profit per game: {initial_profit:.2f}")
     writer.add_scalar('Performance/Profit', initial_profit, 0)
-    
-    # Checkpoint frequency
-    checkpoint_frequency = 100  # Save a checkpoint every 100 iterations
     
     # Training loop
     progress = tqdm(
@@ -203,7 +309,7 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
     last_profit = initial_profit
 
     for iteration in progress:
-        agent.iteration_count = iteration
+        _set_training_iterations(agent, iteration, iteration)
         start_time = time.time()
 
         # Run traversals to collect data
@@ -219,7 +325,11 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
             )
             
             # Perform CFR traversal
-            agent.cfr_traverse(state, iteration, random_agents)
+            try:
+                agent.cfr_traverse(state, iteration, random_agents)
+            except TraversalFailure:
+                _record_traversal_failure_diagnostics(writer, agent, iteration)
+                raise
         
         # Track traversal time
         traversal_time = time.time() - start_time
@@ -234,14 +344,23 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
         writer.add_scalar('Memory/Advantage', len(agent.advantage_memory), iteration)
         
         # Every few iterations, train the strategy network and evaluate
-        if iteration % 10 == 0 or iteration == num_iterations:
+        if _should_evaluate(iteration, num_iterations, evaluation_interval):
             last_strat_loss = agent.train_strategy_network()
             writer.add_scalar('Loss/Strategy', last_strat_loss, iteration)
             
             # Evaluate the agent
-            last_profit = evaluate_against_random(agent, num_games=500, num_players=num_players)
+            last_profit = evaluate_against_random(
+                agent,
+                num_games=random_eval_games,
+                num_players=num_players,
+                writer=writer,
+                iteration=iteration,
+                metric_prefix="Evaluation/Random",
+            )
             profits.append(last_profit)
             writer.add_scalar('Performance/Profit', last_profit, iteration)
+            diagnostics = _record_training_diagnostics(writer, agent, iteration)
+            tqdm.write(format_training_diagnostics(diagnostics))
             
             # Save the model
             #model_path = f"{save_dir}/deep_cfr_iter_{iteration}.pt"
@@ -249,7 +368,7 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
             #print(f"  Model saved to {model_path}")
         
         # Save checkpoint periodically
-        if iteration % checkpoint_frequency == 0 or iteration == num_iterations:
+        if _should_save_checkpoint(iteration, num_iterations, checkpoint_interval):
             checkpoint_path = f"{save_dir}/checkpoint_iter_{iteration}.pt"
             torch.save(
                 standard_checkpoint_state(agent, losses=losses, profits=profits),
@@ -299,7 +418,9 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
 
 def continue_training(checkpoint_path, additional_iterations=1000, 
                      traversals_per_iteration=200, save_dir="models", 
-                     log_dir="logs/deepcfr_continued", verbose=False, debug_training=False):
+                     log_dir="logs/deepcfr_continued", verbose=False, debug_training=False,
+                     checkpoint_interval=1000, evaluation_interval=10,
+                     random_eval_games=500):
     """
     Continue training a Deep CFR agent from a saved checkpoint.
     
@@ -358,18 +479,26 @@ def continue_training(checkpoint_path, additional_iterations=1000,
     
     # ADDED: Initial evaluation before continuing training
     print("Initial evaluation of loaded model...")
-    initial_profit = evaluate_against_random(agent, num_games=500, num_players=num_players)
+    initial_profit = evaluate_against_random(
+        agent,
+        num_games=random_eval_games,
+        num_players=num_players,
+        writer=writer,
+        iteration=start_iteration - 1,
+        metric_prefix="Evaluation/Random",
+    )
     if not profits:  # Only append if profits list is empty
         profits.append(initial_profit)
     print(f"Initial average profit per game: {initial_profit:.2f}")
     writer.add_scalar('Performance/Profit', initial_profit, start_iteration-1)
     
-    # Checkpoint frequency
-    checkpoint_frequency = 100  # Save a checkpoint every 100 iterations
-    
     # Training loop
-    for iteration in range(start_iteration, start_iteration + additional_iterations):
-        agent.iteration_count = iteration
+    final_iteration = start_iteration + additional_iterations - 1
+    for local_iteration, iteration in enumerate(
+        range(start_iteration, start_iteration + additional_iterations),
+        start=1,
+    ):
+        _set_training_iterations(agent, iteration, local_iteration)
         start_time = time.time()
         
         print(f"Iteration {iteration}/{start_iteration + additional_iterations - 1}")
@@ -388,7 +517,11 @@ def continue_training(checkpoint_path, additional_iterations=1000,
             )
             
             # Perform CFR traversal
-            agent.cfr_traverse(state, iteration, random_agents)
+            try:
+                agent.cfr_traverse(state, local_iteration, random_agents)
+            except TraversalFailure:
+                _record_traversal_failure_diagnostics(writer, agent, iteration)
+                raise
         
         # Track traversal time
         traversal_time = time.time() - start_time
@@ -405,7 +538,7 @@ def continue_training(checkpoint_path, additional_iterations=1000,
         writer.add_scalar('Memory/Advantage', len(agent.advantage_memory), iteration)
         
         # Every few iterations, train the strategy network and evaluate
-        if iteration % 10 == 0 or iteration == start_iteration + additional_iterations - 1:
+        if _should_evaluate(iteration, final_iteration, evaluation_interval):
             print("  Training strategy network...")
             strat_loss = agent.train_strategy_network()
             print(f"  Strategy network loss: {strat_loss:.6f}")
@@ -413,10 +546,19 @@ def continue_training(checkpoint_path, additional_iterations=1000,
             
             # Evaluate the agent
             print("  Evaluating agent...")
-            avg_profit = evaluate_against_random(agent, num_games=500, num_players=num_players)
+            avg_profit = evaluate_against_random(
+                agent,
+                num_games=random_eval_games,
+                num_players=num_players,
+                writer=writer,
+                iteration=iteration,
+                metric_prefix="Evaluation/Random",
+            )
             profits.append(avg_profit)
             print(f"  Average profit per game: {avg_profit:.2f}")
             writer.add_scalar('Performance/Profit', avg_profit, iteration)
+            diagnostics = _record_training_diagnostics(writer, agent, iteration)
+            print(f"  {format_training_diagnostics(diagnostics)}")
             
             # Save the model
             model_path = f"{save_dir}/deep_cfr_iter_{iteration}.pt"
@@ -424,7 +566,7 @@ def continue_training(checkpoint_path, additional_iterations=1000,
             print(f"  Model saved to {model_path}")
         
         # Save checkpoint periodically
-        if iteration % checkpoint_frequency == 0 or iteration == start_iteration + additional_iterations - 1:
+        if _should_save_checkpoint(iteration, final_iteration, checkpoint_interval):
             checkpoint_path = f"{save_dir}/checkpoint_iter_{iteration}.pt"
             torch.save(
                 standard_checkpoint_state(agent, losses=losses, profits=profits),
@@ -457,7 +599,9 @@ def continue_training(checkpoint_path, additional_iterations=1000,
 def train_against_checkpoint(checkpoint_path, additional_iterations=1000, 
                            traversals_per_iteration=200, save_dir="models", 
                            log_dir="logs/deepcfr_selfplay", verbose=False, debug_training=False,
-                           progress_interval=100):
+                           progress_interval=100, checkpoint_interval=1000,
+                           evaluation_interval=10, checkpoint_eval_games=100,
+                           random_eval_games=500):
     """
     Continue a Deep CFR agent from a checkpoint while training against a fixed
     opponent pool loaded from that same checkpoint.
@@ -508,20 +652,30 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
     # ADDED: Initial evaluation before training begins
     print("Initial evaluation...")
     initial_profit_vs_checkpoint = evaluate_against_checkpoint_agents(
-        learning_agent, opponent_agents, num_games=100)
+        learning_agent,
+        opponent_agents,
+        num_games=checkpoint_eval_games,
+        writer=writer,
+        iteration=starting_iteration - 1,
+        metric_prefix="Evaluation/Checkpoint",
+    )
     print(f"Initial average profit vs checkpoint: {initial_profit_vs_checkpoint:.2f}")
     writer.add_scalar(
         'Performance/ProfitVsCheckpoint', initial_profit_vs_checkpoint, starting_iteration - 1
     )
     
     initial_profit_random = evaluate_against_random(
-        learning_agent, num_games=500, num_players=6)
+        learning_agent,
+        num_games=random_eval_games,
+        num_players=6,
+        writer=writer,
+        iteration=starting_iteration - 1,
+        metric_prefix="Evaluation/Random",
+    )
     profits.append(initial_profit_random)
     print(f"Initial average profit vs random: {initial_profit_random:.2f}")
     writer.add_scalar('Performance/ProfitVsRandom', initial_profit_random, starting_iteration - 1)
     
-    # Checkpoint frequency
-    checkpoint_frequency = 100  # Save more frequently for self-play
     opponent_wrappers = [None] * 6
     for pos in range(6):
         if pos != learning_agent.player_id:
@@ -541,7 +695,8 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
     last_profit_random = initial_profit_random
 
     for iteration in progress:
-        learning_agent.iteration_count = iteration
+        local_iteration = iteration - starting_iteration + 1
+        _set_training_iterations(learning_agent, iteration, local_iteration)
         start_time = time.time()
 
         # Run traversals to collect data
@@ -557,9 +712,13 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
                 seed=random.randint(0, 10000)
             )
 
-            _cfr_traverse_with_opponents(
-                learning_agent, state, iteration, opponent_wrappers, verbose=verbose
-            )
+            try:
+                _cfr_traverse_with_opponents(
+                    learning_agent, state, local_iteration, opponent_wrappers, verbose=verbose
+                )
+            except TraversalFailure:
+                _record_traversal_failure_diagnostics(writer, learning_agent, iteration)
+                raise
 
         traversal_time = time.time() - start_time
         writer.add_scalar('Time/Traversal', traversal_time, iteration)
@@ -570,24 +729,36 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
         writer.add_scalar('Loss/Advantage', adv_loss, iteration)
         writer.add_scalar('Memory/Advantage', len(learning_agent.advantage_memory), iteration)
 
-        if iteration % 10 == 0 or iteration == final_iteration:
+        if _should_evaluate(iteration, final_iteration, evaluation_interval):
             last_strat_loss = learning_agent.train_strategy_network()
             writer.add_scalar('Loss/Strategy', last_strat_loss, iteration)
 
             last_profit_vs_checkpoint = evaluate_against_checkpoint_agents(
-                learning_agent, opponent_agents, num_games=100
+                learning_agent,
+                opponent_agents,
+                num_games=checkpoint_eval_games,
+                writer=writer,
+                iteration=iteration,
+                metric_prefix="Evaluation/Checkpoint",
             )
             writer.add_scalar(
                 'Performance/ProfitVsCheckpoint', last_profit_vs_checkpoint, iteration
             )
 
             last_profit_random = evaluate_against_random(
-                learning_agent, num_games=500, num_players=6
+                learning_agent,
+                num_games=random_eval_games,
+                num_players=6,
+                writer=writer,
+                iteration=iteration,
+                metric_prefix="Evaluation/Random",
             )
             profits.append(last_profit_random)
             writer.add_scalar('Performance/ProfitVsRandom', last_profit_random, iteration)
+            diagnostics = _record_training_diagnostics(writer, learning_agent, iteration)
+            tqdm.write(format_training_diagnostics(diagnostics))
 
-        if iteration % checkpoint_frequency == 0 or iteration == final_iteration:
+        if _should_save_checkpoint(iteration, final_iteration, checkpoint_interval):
             checkpoint_path = f"{save_dir}/selfplay_checkpoint_iter_{iteration}.pt"
             torch.save(
                 standard_checkpoint_state(learning_agent, losses=losses, profits=profits),
@@ -640,82 +811,36 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
 
     return learning_agent, losses, profits
 
-def evaluate_against_checkpoint_agents(agent, opponent_agents, num_games=100):
+def evaluate_against_checkpoint_agents(
+    agent,
+    opponent_agents,
+    num_games=100,
+    writer=None,
+    iteration=None,
+    metric_prefix="Evaluation/Checkpoint",
+):
     """
     Evaluate the trained agent against opponent agents.
     Each agent will receive and process observations from its own perspective.
     """
-    total_profit = 0
-    completed_games = 0
-    
-    class AgentWrapper:
-        def __init__(self, agent):
-            self.agent = agent
-            self.player_id = agent.player_id
-            
-        def choose_action(self, state):
-            # Each agent processes the state from its own perspective
-            return self.agent.choose_action(state)
-    
-    # Wrap checkpoint agents
     opponent_wrappers = [None] * 6
     for pos in range(6):
         if pos != agent.player_id:
-            opponent_wrappers[pos] = AgentWrapper(opponent_agents[pos])
-    
-    for game in range(num_games):
-        try:
-            # Create a new poker game with rotating button
-            state = pkrs.State.from_seed(
-                n_players=6,
-                button=game % 6,  # Rotate button for fairness
-                sb=1,
-                bb=2,
-                stake=200.0,
-                seed=game + 10000  # Using different seeds than training
-            )
-            
-            # Play until the game is over
-            while not state.final_state:
-                current_player = state.current_player
-                
-                if current_player == agent.player_id:
-                    action = agent.choose_action(state)
-                else:
-                    action = opponent_wrappers[current_player].choose_action(state)
-                
-                # Apply the action with conditional status check
-                new_state, log_file, status = apply_action_with_logging(
-                    state,
-                    action,
-                    strict=STRICT_CHECKING,
-                )
-                if new_state is None:
-                    print(f"WARNING: State status not OK ({status}) in game {game}. Details logged to {log_file}")
-                    break  # Skip this game in non-strict mode
-                
-                state = new_state
-            
-            # Only count completed games
-            if state.final_state:
-                # Add the profit for this game
-                profit = state.players_state[agent.player_id].reward
-                total_profit += profit
-                completed_games += 1
-                
-        except Exception as e:
-            if STRICT_CHECKING:
-                raise  # Re-raise the exception in strict mode
-            else:
-                print(f"Error in game {game}: {e}")
-                # Continue with next game in non-strict mode
-    
-    # Return average profit only for completed games
-    if completed_games == 0:
-        print("WARNING: No games completed during evaluation!")
-        return 0
-    
-    return total_profit / completed_games
+            opponent_wrappers[pos] = _PerspectiveAgentWrapper(opponent_agents[pos])
+
+    metrics = evaluate_agent_matchup(
+        agent,
+        opponent_wrappers,
+        num_games=num_games,
+        seed_start=10000,
+        strict=True,
+        label="evaluation vs checkpoint",
+        print_warnings=True,
+    )
+    write_evaluation_diagnostics(writer, metrics, iteration, metric_prefix)
+    if metrics["completed_games"] == 0:
+        raise RuntimeError("No games completed during evaluation vs checkpoint")
+    return metrics["avg_profit"]
 
 def evaluate_against_agent(agent, opponent_agent, num_games=100):
     """Evaluate the trained agent against an opponent agent."""
@@ -742,7 +867,12 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
                            save_dir="models", log_dir="logs/deepcfr_mixed",
                            refresh_interval=1000, num_opponents=5, verbose=False,
                            checkpoint_path=None, debug_training=False,
-                           progress_interval=100):
+                           progress_interval=100, checkpoint_interval=1000,
+                           update_opponent_pool=False,
+                           pool_save_prefix="pool_checkpoint_iter_",
+                           evaluation_interval=10, mixed_eval_games=100,
+                           random_eval_games=500,
+                           allow_random_fallback=False):
     """
     Train a Deep CFR agent against opponents randomly selected from a pool of checkpoints.
     
@@ -756,6 +886,12 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
         refresh_interval: How often to refresh the opponent pool (in iterations)
         num_opponents: Number of opponents to select from the pool
         verbose: Whether to print verbose output
+        update_opponent_pool: Also write new checkpoints into checkpoint_dir when True
+        pool_save_prefix: Fixed filename prefix for opt-in opponent-pool snapshots
+        evaluation_interval: How often to run in-loop evaluations
+        mixed_eval_games: Hands for each mixed-opponent evaluation
+        random_eval_games: Hands for each random-opponent evaluation
+        allow_random_fallback: Use random opponents if the checkpoint pool is empty
     """
     from torch.utils.tensorboard import SummaryWriter
     import os
@@ -784,9 +920,6 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
     profits = []
     profits_vs_checkpoints = []
     
-    # Checkpoint frequency for saving our learning agent
-    checkpoint_frequency = 100
-
     if checkpoint_path:
         print(f"Loading learning agent from checkpoint: {checkpoint_path}")
         learning_agent.load_model(checkpoint_path)
@@ -799,43 +932,21 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
                 "profits_vs_checkpoints",
                 profits_vs_checkpoints,
             )
-        except Exception:
-            starting_iteration = learning_agent.iteration_count + 1
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to load resume metadata from checkpoint {checkpoint_path}"
+            ) from exc
 
     def select_random_checkpoints():
-        checkpoint_files = [str(path) for path in find_checkpoints(checkpoint_dir, training_model_prefix)]
-
-        if not checkpoint_files:
-            print(
-                f"WARNING: No checkpoint files found matching '{training_model_prefix}' "
-                f"in {checkpoint_dir}"
-            )
-            return [RandomAgent(i) if i != 0 else None for i in range(6)]
-
-        selected_files = random.sample(checkpoint_files, min(num_opponents, len(checkpoint_files)))
-        print(f"Selected checkpoints: {[os.path.basename(f) for f in selected_files]}")
-
-        selected_agents = []
-        current_pos = 1
-        for checkpoint_file in selected_files:
-            checkpoint_agent = DeepCFRAgent(player_id=current_pos, num_players=6, device=device)
-            checkpoint_agent.load_model(checkpoint_file)
-            selected_agents.append((current_pos, checkpoint_agent))
-            current_pos += 1
-            if current_pos >= 6:
-                current_pos = 1
-
-        opponent_agents = [None] * 6
-        opponent_agents[1] = RandomAgent(1)
-
-        for pos, checkpoint_agent in selected_agents:
-            if pos != 1:
-                opponent_agents[pos] = checkpoint_agent
-
-        for pos in range(1, 6):
-            if opponent_agents[pos] is None:
-                opponent_agents[pos] = RandomAgent(pos)
-
+        opponent_agents, _ = _select_mixed_checkpoint_opponents(
+            checkpoint_dir=checkpoint_dir,
+            opponent_model_pattern=training_model_prefix,
+            num_opponents=num_opponents,
+            device=device,
+            player_id=learning_agent.player_id,
+            num_players=6,
+            allow_random_fallback=allow_random_fallback,
+        )
         return opponent_agents
 
     def wrap_opponents(opponent_agents):
@@ -849,7 +960,12 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
 
     print("Initial evaluation...")
     initial_profit_vs_mixed = evaluate_against_checkpoint_agents(
-        learning_agent, opponent_agents, num_games=100
+        learning_agent,
+        opponent_agents,
+        num_games=mixed_eval_games,
+        writer=writer,
+        iteration=starting_iteration - 1,
+        metric_prefix="Evaluation/Mixed",
     )
     if not profits_vs_checkpoints:
         profits_vs_checkpoints.append(initial_profit_vs_mixed)
@@ -857,7 +973,12 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
     writer.add_scalar('Performance/ProfitVsMixed', initial_profit_vs_mixed, starting_iteration - 1)
 
     initial_profit_random = evaluate_against_random(
-        learning_agent, num_games=500, num_players=6
+        learning_agent,
+        num_games=random_eval_games,
+        num_players=6,
+        writer=writer,
+        iteration=starting_iteration - 1,
+        metric_prefix="Evaluation/Random",
     )
     if not profits:
         profits.append(initial_profit_random)
@@ -879,7 +1000,8 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
     last_profit_random = initial_profit_random
 
     for iteration in progress:
-        learning_agent.iteration_count = iteration
+        local_iteration = iteration - starting_iteration + 1
+        _set_training_iterations(learning_agent, iteration, local_iteration)
         start_time = time.time()
 
         if iteration % refresh_interval == 1:
@@ -898,9 +1020,13 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
                 seed=random.randint(0, 10000)
             )
 
-            _cfr_traverse_with_opponents(
-                learning_agent, state, iteration, opponent_wrappers, verbose=verbose
-            )
+            try:
+                _cfr_traverse_with_opponents(
+                    learning_agent, state, local_iteration, opponent_wrappers, verbose=verbose
+                )
+            except TraversalFailure:
+                _record_traversal_failure_diagnostics(writer, learning_agent, iteration)
+                raise
 
         traversal_time = time.time() - start_time
         writer.add_scalar('Time/Traversal', traversal_time, iteration)
@@ -911,28 +1037,49 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
         writer.add_scalar('Loss/Advantage', adv_loss, iteration)
         writer.add_scalar('Memory/Advantage', len(learning_agent.advantage_memory), iteration)
 
-        if iteration % 10 == 0 or iteration == final_iteration:
+        if _should_evaluate(iteration, final_iteration, evaluation_interval):
             last_strat_loss = learning_agent.train_strategy_network()
             writer.add_scalar('Loss/Strategy', last_strat_loss, iteration)
 
             last_profit_vs_mixed = evaluate_against_checkpoint_agents(
-                learning_agent, opponent_agents, num_games=100
+                learning_agent,
+                opponent_agents,
+                num_games=mixed_eval_games,
+                writer=writer,
+                iteration=iteration,
+                metric_prefix="Evaluation/Mixed",
             )
             profits_vs_checkpoints.append(last_profit_vs_mixed)
             writer.add_scalar('Performance/ProfitVsMixed', last_profit_vs_mixed, iteration)
 
             last_profit_random = evaluate_against_random(
-                learning_agent, num_games=500, num_players=6
+                learning_agent,
+                num_games=random_eval_games,
+                num_players=6,
+                writer=writer,
+                iteration=iteration,
+                metric_prefix="Evaluation/Random",
             )
             profits.append(last_profit_random)
             writer.add_scalar('Performance/ProfitVsRandom', last_profit_random, iteration)
+            diagnostics = _record_training_diagnostics(writer, learning_agent, iteration)
+            tqdm.write(format_training_diagnostics(diagnostics))
 
-            if iteration % 100 == 0:
-                t_model_path = f"{checkpoint_dir}/{training_model_prefix}mixed_iter_{iteration}.pt"
+            if (
+                update_opponent_pool
+                and checkpoint_interval > 0
+                and iteration % checkpoint_interval == 0
+            ):
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                t_model_path = _pool_checkpoint_save_path(
+                    checkpoint_dir,
+                    pool_save_prefix,
+                    iteration,
+                )
                 torch.save(standard_checkpoint_state(learning_agent), t_model_path)
                 tqdm.write(f"Training model saved: {t_model_path}")
 
-        if iteration % checkpoint_frequency == 0 or iteration == final_iteration:
+        if _should_save_checkpoint(iteration, final_iteration, checkpoint_interval):
             checkpoint_path = f"{save_dir}/mixed_checkpoint_iter_{iteration}.pt"
             torch.save(
                 standard_checkpoint_state(
@@ -1014,6 +1161,13 @@ def main(argv=None):
     parser.add_argument('--strict', action='store_true', help='Enable strict error checking that raises exceptions for invalid game states')
     parser.add_argument('--debug-training', action='store_true', help='Print detailed training diagnostics from network updates')
     parser.add_argument('--progress-interval', type=int, default=100, help='Print compact training summaries every N iterations; set 0 to disable')
+    parser.add_argument('--checkpoint-interval', type=int, default=1000, help='Save checkpoints every N iterations; set 0 to save only the final checkpoint')
+    parser.add_argument('--eval-interval', type=int, default=10, help='Run in-loop evaluations every N iterations; set 0 to evaluate only final iteration')
+    parser.add_argument('--mixed-eval-games', type=int, default=100, help='Hands per checkpoint/mixed-opponent evaluation')
+    parser.add_argument('--random-eval-games', type=int, default=500, help='Hands per random-opponent evaluation')
+    parser.add_argument('--update-opponent-pool', action='store_true', help='Also save mixed checkpoints back into the opponent pool')
+    parser.add_argument('--pool-save-prefix', type=str, default='pool_checkpoint_iter_', help='Filename prefix for opt-in opponent-pool snapshots')
+    parser.add_argument('--allow-random-fallback', action='store_true', help='Use random opponents when a mixed checkpoint pool is empty')
     args = parser.parse_args(argv)
 
     # Strict training for debug
@@ -1034,6 +1188,13 @@ def main(argv=None):
             checkpoint_path=args.checkpoint,
             debug_training=args.debug_training,
             progress_interval=args.progress_interval,
+            checkpoint_interval=args.checkpoint_interval,
+            update_opponent_pool=args.update_opponent_pool,
+            pool_save_prefix=args.pool_save_prefix,
+            evaluation_interval=args.eval_interval,
+            mixed_eval_games=args.mixed_eval_games,
+            random_eval_games=args.random_eval_games,
+            allow_random_fallback=args.allow_random_fallback,
         )
     elif args.checkpoint and args.self_play:
         print(f"Starting self-play training against checkpoint: {args.checkpoint}")
@@ -1046,6 +1207,10 @@ def main(argv=None):
             verbose=args.verbose,
             debug_training=args.debug_training,
             progress_interval=args.progress_interval,
+            checkpoint_interval=args.checkpoint_interval,
+            evaluation_interval=args.eval_interval,
+            checkpoint_eval_games=args.mixed_eval_games,
+            random_eval_games=args.random_eval_games,
         )
     elif args.checkpoint:
         print(f"Continuing training from checkpoint: {args.checkpoint}")
@@ -1057,6 +1222,9 @@ def main(argv=None):
             log_dir=args.log_dir + "_continued",
             verbose=args.verbose,
             debug_training=args.debug_training,
+            checkpoint_interval=args.checkpoint_interval,
+            evaluation_interval=args.eval_interval,
+            random_eval_games=args.random_eval_games,
         )
     else:
         print(f"Starting Deep CFR training for {args.iterations} iterations")
@@ -1075,6 +1243,9 @@ def main(argv=None):
             verbose=args.verbose,
             debug_training=args.debug_training,
             progress_interval=args.progress_interval,
+            checkpoint_interval=args.checkpoint_interval,
+            evaluation_interval=args.eval_interval,
+            random_eval_games=args.random_eval_games,
         )
     
     print("\nTraining Summary:")

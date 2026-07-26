@@ -13,13 +13,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import numpy as np
-import pokers as pkrs
 import torch
 
 from src.agents.random_agent import RandomAgent
-from src.core.deep_cfr import DeepCFRAgent
+from src.utils.agents import create_agent_for_checkpoint
 from src.utils.checkpoints import find_checkpoints
-from src.utils.logging import apply_action_with_logging
+from src.utils.evaluation import empty_evaluation_metrics, evaluate_agent_matchup
 
 
 def set_reproducible_seed(seed: int) -> None:
@@ -65,13 +64,11 @@ def resolve_checkpoint_paths(
     return unique_paths
 
 
-def load_positioned_agent(checkpoint_path: Path, player_id: int, device: str) -> DeepCFRAgent:
-    agent = DeepCFRAgent(player_id=player_id, num_players=6, device=device)
-    agent.load_model(checkpoint_path)
-    return agent
+def load_positioned_agent(checkpoint_path: Path, player_id: int, device: str):
+    return create_agent_for_checkpoint(checkpoint_path, player_id=player_id, device=device)
 
 
-def build_agent_bank(checkpoint_paths: Sequence[Path], device: str) -> Dict[Path, List[DeepCFRAgent]]:
+def build_agent_bank(checkpoint_paths: Sequence[Path], device: str) -> Dict[Path, List[Any]]:
     return {
         checkpoint_path: [
             load_positioned_agent(checkpoint_path, player_id=player_id, device=device)
@@ -90,7 +87,7 @@ def create_random_opponents(num_players: int, player_id: int) -> List[Optional[A
 
 def create_checkpoint_pool_opponents(
     checkpoint_path: Path,
-    agent_bank: Dict[Path, List[DeepCFRAgent]],
+    agent_bank: Dict[Path, List[Any]],
     player_id: int,
 ) -> List[Optional[Any]]:
     pool_paths = [path for path in agent_bank if path != checkpoint_path]
@@ -109,7 +106,7 @@ def create_checkpoint_pool_opponents(
 
 
 def evaluate_agent(
-    agent: DeepCFRAgent,
+    agent,
     opponents: Sequence[Optional[Any]],
     *,
     num_games: int,
@@ -120,73 +117,17 @@ def evaluate_agent(
     strict: bool,
     label: str,
 ) -> Dict[str, Any]:
-    total_profit = 0.0
-    completed_games = 0
-    invalid_state_games = 0
-    invalid_state_count = 0
-    non_zero_sum_games = 0
-    setup_errors = 0
-
-    for game in range(num_games):
-        try:
-            state = pkrs.State.from_seed(
-                n_players=6,
-                button=game % 6,
-                sb=sb,
-                bb=bb,
-                stake=stake,
-                seed=seed_start + game,
-            )
-
-            game_had_invalid_state = False
-
-            while not state.final_state:
-                current_player = state.current_player
-                if current_player == agent.player_id:
-                    action = agent.choose_action(state)
-                else:
-                    opponent = opponents[current_player]
-                    if opponent is None:
-                        raise ValueError(f"No opponent configured for player {current_player}")
-                    action = opponent.choose_action(state)
-
-                new_state, _, status = apply_action_with_logging(
-                    state,
-                    action,
-                    strict=strict,
-                    error_prefix=f"State status not OK during {label}",
-                )
-                if new_state is None:
-                    invalid_state_count += 1
-                    game_had_invalid_state = True
-                    break
-
-                state = new_state
-
-            if state.final_state:
-                completed_games += 1
-                total_profit += state.players_state[agent.player_id].reward
-                zero_sum_delta = abs(sum(player.reward for player in state.players_state))
-                if zero_sum_delta > 1e-9:
-                    non_zero_sum_games += 1
-            elif game_had_invalid_state:
-                invalid_state_games += 1
-        except Exception:
-            if strict:
-                raise
-            setup_errors += 1
-
-    avg_profit = total_profit / completed_games if completed_games else 0.0
-
-    return {
-        "avg_profit": avg_profit,
-        "completed_games": completed_games,
-        "invalid_state_games": invalid_state_games,
-        "invalid_state_count": invalid_state_count,
-        "non_zero_sum_games": non_zero_sum_games,
-        "setup_errors": setup_errors,
-        "requested_games": num_games,
-    }
+    return evaluate_agent_matchup(
+        agent,
+        opponents,
+        num_games=num_games,
+        seed_start=seed_start,
+        stake=stake,
+        sb=sb,
+        bb=bb,
+        strict=strict,
+        label=label,
+    )
 
 
 def evaluate_checkpoint_paths(
@@ -229,15 +170,7 @@ def evaluate_checkpoint_paths(
                 label=f"evaluation vs random for {checkpoint_path.name}",
             )
         else:
-            random_metrics = {
-                "avg_profit": 0.0,
-                "completed_games": 0,
-                "invalid_state_games": 0,
-                "invalid_state_count": 0,
-                "non_zero_sum_games": 0,
-                "setup_errors": 0,
-                "requested_games": 0,
-            }
+            random_metrics = empty_evaluation_metrics(0)
 
         if games_pool > 0:
             set_reproducible_seed(seed + 1)
@@ -253,15 +186,7 @@ def evaluate_checkpoint_paths(
                 label=f"evaluation vs checkpoint pool for {checkpoint_path.name}",
             )
         else:
-            pool_metrics = {
-                "avg_profit": 0.0,
-                "completed_games": 0,
-                "invalid_state_games": 0,
-                "invalid_state_count": 0,
-                "non_zero_sum_games": 0,
-                "setup_errors": 0,
-                "requested_games": 0,
-            }
+            pool_metrics = empty_evaluation_metrics(0)
 
         checkpoint_result["vs_random"] = random_metrics
         checkpoint_result["vs_checkpoint_pool"] = pool_metrics
@@ -277,9 +202,11 @@ def print_results_table(results: Sequence[dict]) -> None:
         "rand_profit",
         "rand_done",
         "rand_invalid",
+        "rand_sanitized",
         "pool_profit",
         "pool_done",
         "pool_invalid",
+        "pool_sanitized",
     ]
     rows = []
     for result in results:
@@ -290,9 +217,11 @@ def print_results_table(results: Sequence[dict]) -> None:
                 f'{result["vs_random"]["avg_profit"]:.2f}',
                 str(result["vs_random"]["completed_games"]),
                 str(result["vs_random"]["invalid_state_count"]),
+                str(result["vs_random"]["sanitized_actions"]),
                 f'{result["vs_checkpoint_pool"]["avg_profit"]:.2f}',
                 str(result["vs_checkpoint_pool"]["completed_games"]),
                 str(result["vs_checkpoint_pool"]["invalid_state_count"]),
+                str(result["vs_checkpoint_pool"]["sanitized_actions"]),
             ]
         )
 
@@ -331,6 +260,7 @@ def write_csv_results(results: Sequence[dict], output_path: str) -> None:
         "vs_random_non_zero_sum_games",
         "vs_random_setup_errors",
         "vs_random_requested_games",
+        "vs_random_sanitized_actions",
         "vs_checkpoint_pool_avg_profit",
         "vs_checkpoint_pool_completed_games",
         "vs_checkpoint_pool_invalid_state_games",
@@ -338,6 +268,7 @@ def write_csv_results(results: Sequence[dict], output_path: str) -> None:
         "vs_checkpoint_pool_non_zero_sum_games",
         "vs_checkpoint_pool_setup_errors",
         "vs_checkpoint_pool_requested_games",
+        "vs_checkpoint_pool_sanitized_actions",
     ]
 
     with output.open("w", newline="", encoding="utf-8") as handle:
@@ -357,6 +288,7 @@ def write_csv_results(results: Sequence[dict], output_path: str) -> None:
                     "vs_random_non_zero_sum_games": result["vs_random"]["non_zero_sum_games"],
                     "vs_random_setup_errors": result["vs_random"]["setup_errors"],
                     "vs_random_requested_games": result["vs_random"]["requested_games"],
+                    "vs_random_sanitized_actions": result["vs_random"]["sanitized_actions"],
                     "vs_checkpoint_pool_avg_profit": result["vs_checkpoint_pool"]["avg_profit"],
                     "vs_checkpoint_pool_completed_games": result["vs_checkpoint_pool"]["completed_games"],
                     "vs_checkpoint_pool_invalid_state_games": result["vs_checkpoint_pool"]["invalid_state_games"],
@@ -364,6 +296,7 @@ def write_csv_results(results: Sequence[dict], output_path: str) -> None:
                     "vs_checkpoint_pool_non_zero_sum_games": result["vs_checkpoint_pool"]["non_zero_sum_games"],
                     "vs_checkpoint_pool_setup_errors": result["vs_checkpoint_pool"]["setup_errors"],
                     "vs_checkpoint_pool_requested_games": result["vs_checkpoint_pool"]["requested_games"],
+                    "vs_checkpoint_pool_sanitized_actions": result["vs_checkpoint_pool"]["sanitized_actions"],
                 }
             )
 
@@ -377,7 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--games-pool", type=int, default=100, help="Hands to play against the checkpoint pool")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed for reproducible evaluation")
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto", help="Inference device")
-    parser.add_argument("--strict", action="store_true", help="Raise immediately on invalid game states")
+    parser.add_argument("--strict", action="store_true", help="Raise immediately on invalid game states (default)")
+    parser.add_argument("--allow-invalid-games", action="store_true", help="Continue after invalid games and report error counts")
     parser.add_argument("--stake", type=float, default=200.0, help="Initial stake for each player")
     parser.add_argument("--sb", type=float, default=1.0, help="Small blind")
     parser.add_argument("--bb", type=float, default=2.0, help="Big blind")
@@ -389,6 +323,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.strict and args.allow_invalid_games:
+        parser.error("--strict and --allow-invalid-games cannot be combined")
 
     checkpoint_paths = resolve_checkpoint_paths(args.checkpoints, args.checkpoint_dir, args.pattern)
     results = evaluate_checkpoint_paths(
@@ -397,7 +333,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         games_pool=args.games_pool,
         seed=args.seed,
         device=args.device,
-        strict=args.strict,
+        strict=not args.allow_invalid_games,
         stake=args.stake,
         sb=args.sb,
         bb=args.bb,

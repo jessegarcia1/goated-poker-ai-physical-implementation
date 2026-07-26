@@ -7,13 +7,17 @@ import numpy as np
 import random
 import pokers as pkrs
 from collections import deque
-from src.core.model import encode_state, VERBOSE, set_verbose
+from src.core import model as model_settings
+from src.core.model import encode_state, set_verbose
 from src.opponent_modeling.opponent_model import OpponentModelingSystem
 from src.core.deep_cfr import (
     DeepCFRAgent,
     PrioritizedMemory,
     _resolve_model_save_path,
+    linear_cfr_weights,
     traverse_agent_turn,
+    weighted_sample_loss,
+    weighted_strategy_cross_entropy,
 )
 from src.utils.checkpoints import (
     AGENT_TYPE_OPPONENT_MODELING,
@@ -21,9 +25,14 @@ from src.utils.checkpoints import (
     opponent_modeling_checkpoint_state,
     validate_checkpoint_compatibility,
 )
-from src.agents.random_agent import RandomAgent
-from src.utils.settings import STRICT_CHECKING
+from src.utils import settings
 from src.utils.logging import apply_action_with_logging
+from src.utils.traversal_diagnostics import (
+    TraversalDiagnostics,
+    TraversalFailure,
+    fail_traversal,
+    failure_context,
+)
 
 class EnhancedPokerNetwork(nn.Module):
     """
@@ -133,6 +142,8 @@ class DeepCFRAgentWithOpponentModeling:
         
         # For keeping statistics
         self.iteration_count = 0
+        self.local_training_iteration = 0
+        self.traversal_diagnostics = TraversalDiagnostics()
         
         # Bet sizing bounds (as multipliers of pot)
         self.min_bet_size = 0.1
@@ -276,9 +287,19 @@ class DeepCFRAgentWithOpponentModeling:
         # Add recursion depth protection
         max_depth = 1000
         if depth > max_depth:
-            if VERBOSE:
-                print(f"WARNING: Max recursion depth reached ({max_depth}). Returning zero value.")
-            return 0
+            if model_settings.is_verbose():
+                print(f"WARNING: Max recursion depth reached ({max_depth}). Raising traversal failure.")
+            fail_traversal(
+                self,
+                "max_depth",
+                **failure_context(
+                    state=state,
+                    depth=depth,
+                    iteration=iteration,
+                    player_id=self.player_id,
+                    message=f"Max recursion depth reached ({max_depth})",
+                ),
+            )
         
         if state.final_state:
             # Record the end of the game for opponent modeling
@@ -302,7 +323,7 @@ class DeepCFRAgentWithOpponentModeling:
                     next_depth,
                 ),
                 depth=depth,
-                verbose=VERBOSE,
+                verbose=model_settings.is_verbose(),
                 opponent_features=opponent_feature_array,
                 network_forward_fn=lambda state_tensor, opponent_feature_tensor: self.advantage_net(
                     state_tensor.unsqueeze(0),
@@ -318,9 +339,19 @@ class DeepCFRAgentWithOpponentModeling:
                 
                 # Handle the case if we have no opponent at this position (shouldn't happen)
                 if opponent is None:
-                    if VERBOSE:
-                        print(f"WARNING: No opponent at position {current_player}, using random action")
-                    opponent = RandomAgent(current_player)
+                    if model_settings.is_verbose():
+                        print(f"WARNING: No opponent at position {current_player}. Raising traversal failure.")
+                    fail_traversal(
+                        self,
+                        "opponent_missing",
+                        **failure_context(
+                            state=state,
+                            depth=depth,
+                            iteration=iteration,
+                            player_id=self.player_id,
+                            message=f"No opponent at position {current_player}",
+                        ),
+                    )
                 
                 # Let the opponent choose an action
                 action = opponent.choose_action(state)
@@ -347,21 +378,46 @@ class DeepCFRAgentWithOpponentModeling:
                 new_state, log_file, status = apply_action_with_logging(
                     state,
                     action,
-                    strict=STRICT_CHECKING,
+                    strict=settings.is_strict_checking(),
                 )
 
                 # Check if the action was valid
                 if new_state is None:
-                    if VERBOSE:
+                    if model_settings.is_verbose():
                         print(f"WARNING: Opponent made invalid action at depth {depth}. Status: {status}")
                         print(f"Details logged to {log_file}")
-                    return 0
+                    fail_traversal(
+                        self,
+                        "opponent_invalid_action",
+                        **failure_context(
+                            state=state,
+                            depth=depth,
+                            iteration=iteration,
+                            player_id=self.player_id,
+                            action=action,
+                            status=status,
+                            log_file=log_file,
+                        ),
+                    )
                     
                 return self.cfr_traverse(new_state, iteration, opponents, depth + 1)
+            except TraversalFailure:
+                raise
             except Exception as e:
-                if VERBOSE:
+                if model_settings.is_verbose():
                     print(f"ERROR in opponent traversal: {e}")
-                return 0
+                fail_traversal(
+                    self,
+                    "opponent_exception",
+                    exception=e,
+                    **failure_context(
+                        state=state,
+                        depth=depth,
+                        iteration=iteration,
+                        player_id=self.player_id,
+                        message=str(e),
+                    ),
+                )
     
     def train_advantage_network(self, batch_size=128, epochs=3):
         """Train the advantage network using collected samples with opponent modeling."""
@@ -452,17 +508,21 @@ class DeepCFRAgentWithOpponentModeling:
             opponent_feature_tensors = torch.FloatTensor(np.array(opponent_features)).to(self.device)
             strategy_tensors = torch.FloatTensor(np.array(strategies)).to(self.device)
             bet_size_tensors = torch.FloatTensor(np.array(bet_sizes)).unsqueeze(1).to(self.device)
-            iteration_tensors = torch.FloatTensor(iterations).to(self.device).unsqueeze(1)
+            iteration_tensors = torch.FloatTensor(iterations).to(self.device)
             
             # Weight samples by iteration (Linear CFR)
-            weights = iteration_tensors / torch.sum(iteration_tensors)
+            weights = linear_cfr_weights(iteration_tensors, device=self.device)
             
             # Forward pass with opponent features
             action_logits, bet_size_preds = self.strategy_net(state_tensors, opponent_feature_tensors)
             predicted_strategies = F.softmax(action_logits, dim=1)
             
             # Action type loss (weighted cross-entropy)
-            action_loss = -torch.sum(weights * torch.sum(strategy_tensors * torch.log(predicted_strategies + 1e-8), dim=1))
+            action_loss = weighted_strategy_cross_entropy(
+                strategy_tensors,
+                predicted_strategies,
+                weights,
+            )
             
             # Bet size loss (only for states with raise actions)
             raise_mask = (strategy_tensors[:, 2] > 0)
@@ -472,8 +532,12 @@ class DeepCFRAgentWithOpponentModeling:
                 raise_bet_targets = bet_size_tensors[raise_indices]
                 raise_weights = weights[raise_indices]
                 
-                bet_size_loss = F.mse_loss(raise_bet_preds, raise_bet_targets, reduction='none')
-                weighted_bet_size_loss = torch.sum(raise_weights * bet_size_loss.squeeze())
+                bet_size_loss = F.mse_loss(
+                    raise_bet_preds,
+                    raise_bet_targets,
+                    reduction='none',
+                ).squeeze(1)
+                weighted_bet_size_loss = weighted_sample_loss(bet_size_loss, raise_weights)
                 
                 # Combine losses
                 loss = action_loss + 0.5 * weighted_bet_size_loss  # Less weight on bet sizing to balance learning
@@ -540,9 +604,18 @@ class DeepCFRAgentWithOpponentModeling:
         
         # Use the predicted bet size for raise actions
         if action_type == 2:  # Raise
-            return self.action_type_to_pokers_action(action_type, state, bet_size_multiplier)
+            return self.action_type_to_pokers_action(
+                action_type,
+                state,
+                bet_size_multiplier,
+                strict=settings.is_strict_checking(),
+            )
         else:
-            return self.action_type_to_pokers_action(action_type, state)
+            return self.action_type_to_pokers_action(
+                action_type,
+                state,
+                strict=settings.is_strict_checking(),
+            )
     
     def save_model(self, path_prefix):
         """Save the model to disk, including opponent modeling."""
