@@ -8,6 +8,7 @@ import math
 import sys
 import onnxruntime as ort
 from pokers import Card
+import cv2
 
 DEFAULT_MODEL = "synthetic"
 SHOW_CONFIDENCE = False

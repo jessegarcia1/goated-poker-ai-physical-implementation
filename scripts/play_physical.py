@@ -11,6 +11,8 @@ from scripts.play import RandomAgent, get_human_action, display_game_state, get_
 from src.utils import apply_action_with_logging
 from src.utils.actions import raise_bounds
 from scripts.playing_card_detection.detect_cards import detect_cards
+from src.utils.raspi import get_serial_info
+
 """
     To run: python -m scripts.play_physical 
     Players 4 and five are lowkey special
@@ -336,4 +338,14 @@ class PhysicalGame:
         print(f"Final balance: ${player_stake:.2f}")
         
 # $10 stake, 25 cent chips
-PhysicalGame(n_players=6, button_pos=1, initial_stake=10.0, num_human_players=3, num_agents=3, small_blind=.25, big_blind=.50).play_against_models_physical()
+if __name__ == "__main__":
+    game_state = get_serial_info()
+    
+    PhysicalGame(
+        n_players=game_state.num_players, 
+        button_pos=game_state.button_pos, 
+        initial_stake=game_state.initial_stake, 
+        num_agents=game_state.num_agents, 
+        small_blind=game_state.small_blind, 
+        big_blind=game_state.big_blind
+    ).play_against_models_physical()
