@@ -15,6 +15,7 @@ agents: Optional[Agents] = None
 
 class CardImage(BaseModel):
     image_as_list: list
+    count: int
 
 class AgentsInfo(BaseModel):
     n_players: int
@@ -39,25 +40,31 @@ def load_models(data: AgentsInfo):
     n_agents = data.n_agents
     
     agents = Agents(n_players, n_agents)
-    agents.load_agents()
+    status = agents.load_agents()
     
-    return {"status": "models loaded successfully", "num_agents": n_agents}
+    return {"status": status, "num_agents": n_agents}
     
-
-@app.post("/card-recognition", status_code=200)
-def card_recognition(data: CardImage):
+@app.post("/card-detection", status_code=200)
+def card_detection(data: CardImage):
     if agents is None:
         raise HTTPException(status_code=400, detail="Models not loaded yet. Call /load-models first.")
     
     image = data.image_as_list
+    count = data.count
     
-    card_list = detect_cards(image)
-    print("Recognized cards", card_list)
+    card_list = detect_cards(image, count)
+    print(card_list)
     
-    return {"card_list": card_list}
+    status = "ok"    
+    if card_list == None:
+        status == "failed"
+        
+    return {"status": status, "card_list": card_list}
 
 @app.post("/choose-action", status_code=200)
 def choose_action(data: GameState):
+    global agents 
+    
     if agents is None:
         raise HTTPException(status_code=400, detail="Models not loaded yet. Call /load-models first.")
 
@@ -69,7 +76,6 @@ def choose_action(data: GameState):
     
     return {"action": action.action, "amount": action.amount}
     
-  
 
 # used to expose backend to other local guys
 if __name__ == "__main__":
