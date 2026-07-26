@@ -11,5 +11,5 @@ seaborn==0.13.2
 pandas==2.2.2
 PyQt5==5.15.11
 
-ultralytics
 opencv-python
+python-dotenv

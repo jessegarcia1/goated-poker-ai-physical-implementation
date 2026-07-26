@@ -1,17 +1,13 @@
-import torch
 import pokers as pkrs
 import random
-import os
-import numpy as np
-import math
+import requests
 
-from pokers import Card, Action, State
-from src.core.deep_cfr import DeepCFRAgent
-from scripts.play import RandomAgent, get_human_action, display_game_state, get_action_description, card_to_string, set_verbose
+from pokers import Card, Action
+from scripts.play_helpers import get_human_action, display_game_state, get_action_description, card_to_string
 from src.utils import apply_action_with_logging
 from src.utils.actions import raise_bounds
-from scripts.playing_card_detection.detect_cards import detect_cards
-from src.utils.raspi import get_serial_info
+from src.utils.raspi import get_serial_info, capture_photo
+from src.routes.routes import routes, urls
 
 """
     To run: python -m scripts.play_physical 
@@ -27,15 +23,10 @@ class PhysicalGame:
         n_players: int,
         button_pos: int,
         initial_stake: float,
-        num_human_players: int,
         num_agents: int,
         small_blind: float = 1.0,
         big_blind: float = 2.0,
-        verbose: bool = False,
     ):
-        if num_human_players + num_agents != n_players:
-            raise ValueError("num_human_players + num_agents must equal n_players")
-
         if n_players <= 1:
             raise ValueError("Need at least 2 players")
         
@@ -44,15 +35,14 @@ class PhysicalGame:
         self.initial_stake = initial_stake
         self.small_blind = small_blind
         self.big_blind = big_blind
-        self.verbose = verbose
-        self.num_human_players = num_human_players
+        self.num_human_players = n_players - num_agents
         self.num_agents = num_agents
 
         # Humans occupy first N seats by default
-        self.human_positions = list(range(num_human_players))
+        self.human_positions = list(range(self.num_human_players))
         # Agents occupy remaining seats
         self.agent_positions = list(
-            range(num_human_players, n_players)
+            range(self.num_human_players, n_players)
         )
 
         # Bankroll tracking
@@ -63,35 +53,6 @@ class PhysicalGame:
         
         self.state = None
         self.agents = [None] * n_players
-        self.device = (
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-
-        print(f"Using device: {self.device}")
-
-    def load_agents(self, model_paths):
-        """
-        Load AI agents into agent positions.
-        """
-        print(f"Selected {len(model_paths)} models for this game:")
-        for model_idx, path in enumerate(model_paths):
-            print(f"  Model {model_idx+1}: {os.path.basename(path)}")
-        set_verbose(self.verbose)
-
-        # model_idx is its index in the model_paths list, pos is its position at the table
-        for model_idx, pos in enumerate(self.agent_positions):
-            if model_idx < len(model_paths):
-                try:
-                    agent = DeepCFRAgent(player_id=pos, num_players=self.n_players, device=self.device)
-                    agent.load_model(model_paths[model_idx])
-                    self.agents[pos] = agent
-                    print(f"Loaded model for Player {pos}: {os.path.basename(model_paths[model_idx])}")
-                except Exception as e:
-                    print(f"Error loading model for Player {pos}: {e}")
-                    self.agents.append(RandomAgent(pos))
-            else:
-                self.agents.append(RandomAgent(pos))
-                print(f"Using random agent for Player {pos}")
 
     def create_state(self):
         """
@@ -124,7 +85,8 @@ class PhysicalGame:
 
     def set_cards(self, count: int, prompt: str=None, detect=True)-> list[Card] | None:
         """
-        Prompt the user to enter cards from the physical table.
+        Detect cards from an image or if prompt != None,
+        prompt the user to enter cards from the physical table.
         
         Args:
             count: How many cards to capture
@@ -150,12 +112,32 @@ class PhysicalGame:
                 # Show what was parsed for confirmation
                 readable = [f"{card_to_string(o)}" for o in card_objects]
                 confirm = input(f"Confirm: {' '.join(readable)}? (y/n): ").strip().lower()
-                if confirm == 'y':
+                if confirm == "y":
                     print("\n")
                     return card_objects
         else:
             print(f"\n{prompt}")
-            return detect_cards(count)
+            status = "failed"
+            max_tries = 3 # This will capture 3 photos at max
+            
+            for attempt in range(max_tries):
+                image = capture_photo(0)
+                payload = {"image_as_list": image, "count": count}
+                headers = {"content-type": "application/json"}
+                
+                print('Sending photo...\n')
+                r = requests.post(urls["mac-tailscale"] + routes["face-recognition"], 
+                                headers=headers, 
+                                json=payload)
+
+                data = r.json()
+                status = data["status"]
+                print("status: ", status)
+                
+                if status == "ok":
+                    return data["card_list"]
+                
+            raise Exception("ERROR: Cards failed to be set.")
 
     def get_nearest_quarter_amount(self, action: Action):
         """
@@ -205,21 +187,6 @@ class PhysicalGame:
             - Set each AI's initial stake
             - Set number of players and how many AI models there will be.
         """
-
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {device}")
-        
-        base_path = 'models/standard/mixed'
-        model_paths = [
-            base_path + '/mixed_checkpoint_iter_33700.pt',
-            base_path + '/mixed_checkpoint_iter_33800.pt',
-            base_path + '/mixed_checkpoint_iter_33900.pt',
-            base_path + '/mixed_checkpoint_iter_400000.pt',
-            'models/standard/selfplay' + '/selfplay_checkpoint_iter_22000.pt'
-        ]
-        
-        # Load the agents
-        self.load_agents(model_paths=model_paths)
 
         num_games = 0
         total_profit = 0
@@ -339,8 +306,15 @@ class PhysicalGame:
         
 # $10 stake, 25 cent chips
 if __name__ == "__main__":
-    game_state = get_serial_info()
+    print("Sending get request...")
+    r = requests.get(urls["mac-tailscale"] + routes["is-backend-up"])
+
+    if (r.status_code != 200):
+        raise Exception("Backend is not up!")
     
+    
+    game_state = get_serial_info()
+
     PhysicalGame(
         n_players=game_state.num_players, 
         button_pos=game_state.button_pos, 
