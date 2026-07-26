@@ -2,7 +2,7 @@ import pokers as pkrs
 import random
 import requests
 
-from pokers import Card, Action
+from pokers import Card, Action, State
 from scripts.play_helpers import get_human_action, display_game_state, get_action_description, card_to_string
 from src.utils import apply_action_with_logging
 from src.utils.actions import raise_bounds
@@ -10,7 +10,7 @@ from src.utils.raspi import get_serial_info, capture_photo
 from src.routes.routes import routes, urls
 
 """
-    To run: python -m scripts.play_physical 
+    To run: python3 -m scripts.play_physical 
     Players 4 and five are lowkey special
 """
 class PhysicalGame:
@@ -53,12 +53,50 @@ class PhysicalGame:
         
         self.state = None
         self.agents = [None] * n_players
+        
+    def handle_post_request(self, payload: dict, route_key: str, timeout: float = 10.0):
+        """
+            Handles sending out a post request.
+            
+            Args:
+                payload: Payload to send in the post requeste
+                route_key: The route to hit in the backend
+                timeout: Timeout in seconds
+            Returns:
+                The parsed JSON response body.
+        """
+        headers = {"content-type": "application/json"}
+        url = urls["mac-tailscale-ip"] + routes[route_key]
+
+        print('Loading models...\n')
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as err:
+            print(f"Request to {url} failed: {err}")
+            raise
+
+        if response.status_code == 204:
+            raise Exception("Post request receives status of 204, response = { }")
+
+        try:
+            return response.json()
+        except ValueError as err:
+            print(f"Failed to parse JSON response from {url}: {err}")
+            raise
 
     def create_state(self):
         """
-        Create a new poker state using current bankrolls.
+            Create a new poker state using current bankrolls.
         """        
-        self.state = pkrs.State.from_seed(
+        print("debug")
+        print(type(self.n_players))
+        print(type(self.button_pos))
+        print(type(self.small_blind))
+        print(type(self.big_blind))
+        print(type(self.initial_stake))
+        
+        self.state = State.from_seed(
             n_players=self.n_players,
             button=self.button_pos,
             sb=self.small_blind,
@@ -67,6 +105,7 @@ class PhysicalGame:
             seed=random.randint(0, 10000),
         )
 
+        print("Debug")
         # Manually overwrite player stakes. 
         # Agent stakes will be tracked and updated.
         # Human stakes will always be the initial_stake becausee these cannot be tracked.
@@ -126,7 +165,7 @@ class PhysicalGame:
                 headers = {"content-type": "application/json"}
                 
                 print('Sending photo...\n')
-                r = requests.post(urls["mac-tailscale"] + routes["face-recognition"], 
+                r = requests.post(urls["mac-tailscale-ip"] + routes["face-recognition"], 
                                 headers=headers, 
                                 json=payload)
 
@@ -187,6 +226,14 @@ class PhysicalGame:
             - Set each AI's initial stake
             - Set number of players and how many AI models there will be.
         """
+        
+        payload = {"n_players": self.n_players, "n_agents": self.num_agents}
+
+        data = self.handle_post_request(payload, "load-models")
+        status = data["status"]
+        print("status: ", status)
+        if status == "failed":
+            raise Exception("Failed loading models")
 
         num_games = 0
         total_profit = 0
@@ -209,6 +256,7 @@ class PhysicalGame:
             
             # Updates agent bankrolls, humans stay at initial_stake.
             state = self.create_state()
+            print(f"State created: {state}")
 
             # Collect physical cards before betting starts
             # if num_ai != len(image_list):
@@ -306,15 +354,25 @@ class PhysicalGame:
         
 # $10 stake, 25 cent chips
 if __name__ == "__main__":
+    
+    state = State.from_seed(
+            n_players=6,
+            button=1,
+            sb=.25,
+            bb=.5,
+            stake=10.00,
+            seed=random.randint(0, 10000),
+        )
     print("Sending get request...")
-    r = requests.get(urls["mac-tailscale"] + routes["is-backend-up"])
+    r = requests.get(urls["mac-tailscale-ip"] + routes["is-backend-up"])
 
     if (r.status_code != 200):
         raise Exception("Backend is not up!")
     
-    
-    game_state = get_serial_info()
-
+    print("Waiting for arduino information")
+    game_state = get_serial_info(skip=True)
+    print("Game State: ", game_state)
+        
     PhysicalGame(
         n_players=game_state.num_players, 
         button_pos=game_state.button_pos, 

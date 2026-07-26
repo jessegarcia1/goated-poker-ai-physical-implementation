@@ -4,11 +4,11 @@ import os
 load_dotenv()
 
 local_ip = os.getenv("LOCAL_IP")
-tailscale_ip = os.getenv("TAILSCALE_IP")
+mac_tailscale_ip = os.getenv("MAC_TAILSCALE_IP")
 
 urls = {
-  "local-ip-8000": "http://" + local_ip,
-  "mac-tailscale": "http://" + tailscale_ip
+  "local-ip": "http://" + local_ip + ":8000",
+  "mac-tailscale-ip": "http://" + mac_tailscale_ip + ":8000"
 }
 
 routes = {

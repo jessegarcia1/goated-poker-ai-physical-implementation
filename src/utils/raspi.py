@@ -41,26 +41,36 @@ class PhysicalGameState:
     small_blind: float
     big_blind: float
 
-def get_serial_info(port='/dev/ttyACM0', baudrate=9600):
-    ser = serial.Serial(port, baudrate, timeout=None)
+def get_serial_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
+    if skip:
+        return PhysicalGameState(
+            num_players=6,
+            num_agents=2,
+            initial_stake=10.00,
+            button_pos=1,
+            small_blind=.25,
+            big_blind=.50,
+        )
+    else:
+        ser = serial.Serial(port, baudrate, timeout=None)
 
-    num_players = int(ser.readline().decode().strip())
-    num_agents = int(ser.readline().decode().strip())
-    initial_stake = float(ser.readline().decode().strip())
-    button_pos = int(ser.readline().decode().strip())
-    small_blind = float(ser.readline().decode().strip())
-    big_blind = float(ser.readline().decode().strip())
+        num_players = int(ser.readline().decode().strip())
+        num_agents = int(ser.readline().decode().strip())
+        initial_stake = float(ser.readline().decode().strip())
+        button_pos = int(ser.readline().decode().strip())
+        small_blind = float(ser.readline().decode().strip())
+        big_blind = float(ser.readline().decode().strip())
 
-    ser.close()
+        ser.close()
 
-    return PhysicalGameState(
-        num_players=num_players,
-        num_agents=num_agents,
-        initial_stake=initial_stake,
-        button_pos=button_pos,
-        small_blind=small_blind,
-        big_blind=big_blind,
-    )
+        return PhysicalGameState(
+            num_players=num_players,
+            num_agents=num_agents,
+            initial_stake=initial_stake,
+            button_pos=button_pos,
+            small_blind=small_blind,
+            big_blind=big_blind,
+        )
 
 
 if __name__ == '__main__':
