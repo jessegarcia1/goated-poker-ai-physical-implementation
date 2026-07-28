@@ -2,7 +2,7 @@
 import random
 import pokers as pkrs
 from src.utils import settings
-from src.utils.logging import log_game_error
+from src.utils.logging_methods import log_game_error
 from src.utils.actions import ActionMappingFailure, preset_raise_action
 
 class RandomAgent:

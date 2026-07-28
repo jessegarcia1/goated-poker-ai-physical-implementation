@@ -7,7 +7,7 @@ import pokers as pkrs
 
 from src.utils import settings
 from src.utils.actions import sanitize_action
-from src.utils.logging import apply_action_with_logging
+from src.utils.logging_methods import apply_action_with_logging
 
 
 def action_history_id(action: pkrs.Action, pot: float) -> int:

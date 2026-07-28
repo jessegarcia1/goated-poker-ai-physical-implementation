@@ -1,13 +1,14 @@
 import pokers as pkrs
 import random
 import requests
+import time
 
 from pokers import Card, Action, State
-from scripts.play_helpers import get_human_action, display_game_state, get_action_description, card_to_string
+from scripts.play_helpers import card_to_string, get_action_description, get_human_action, display_game_state
 from src.utils import apply_action_with_logging
+from src.utils.raspi import capture_photo, get_serial_info
+from src.routes.routes import urls, routes
 from src.utils.actions import raise_bounds
-from src.utils.raspi import get_serial_info, capture_photo
-from src.routes.routes import routes, urls
 
 """
     To run: python3 -m scripts.play_physical 
@@ -59,7 +60,7 @@ class PhysicalGame:
             Handles sending out a post request.
             
             Args:
-                payload: Payload to send in the post requeste
+                payload: Payload to send in the post requests
                 route_key: The route to hit in the backend
                 timeout: Timeout in seconds
             Returns:
@@ -68,7 +69,6 @@ class PhysicalGame:
         headers = {"content-type": "application/json"}
         url = urls["mac-tailscale-ip"] + routes[route_key]
 
-        print('Loading models...\n')
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
@@ -162,21 +162,17 @@ class PhysicalGame:
             for attempt in range(max_tries):
                 image = capture_photo(0)
                 payload = {"image_as_list": image, "count": count}
-                headers = {"content-type": "application/json"}
                 
                 print('Sending photo...\n')
-                r = requests.post(urls["mac-tailscale-ip"] + routes["face-recognition"], 
-                                headers=headers, 
-                                json=payload)
+                data = self.handle_post_request(payload, "card-detection")
 
-                data = r.json()
                 status = data["status"]
-                print("status: ", status)
+                print("detection status: ", status)
                 
                 if status == "ok":
                     return data["card_list"]
                 
-            raise Exception("ERROR: Cards failed to be set.")
+            raise Exception(f"ERROR: {count} Cards failed to be set.")
 
     def get_nearest_quarter_amount(self, action: Action):
         """
@@ -354,15 +350,6 @@ class PhysicalGame:
         
 # $10 stake, 25 cent chips
 if __name__ == "__main__":
-    
-    state = State.from_seed(
-            n_players=6,
-            button=1,
-            sb=.25,
-            bb=.5,
-            stake=10.00,
-            seed=random.randint(0, 10000),
-        )
     print("Sending get request...")
     r = requests.get(urls["mac-tailscale-ip"] + routes["is-backend-up"])
 
@@ -371,7 +358,6 @@ if __name__ == "__main__":
     
     print("Waiting for arduino information")
     game_state = get_serial_info(skip=True)
-    print("Game State: ", game_state)
         
     PhysicalGame(
         n_players=game_state.num_players, 

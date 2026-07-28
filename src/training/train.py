@@ -12,7 +12,7 @@ from src.core.model import set_verbose
 from src.utils import settings
 from src.utils.agents import CheckpointAgent
 from src.utils.checkpoints import find_checkpoints, load_checkpoint, standard_checkpoint_state
-from src.utils.logging import apply_action_with_logging
+from src.utils.logging_methods import apply_action_with_logging
 from src.utils.evaluation import evaluate_agent_matchup, write_evaluation_diagnostics
 from src.utils.training_diagnostics import (
     collect_training_diagnostics,

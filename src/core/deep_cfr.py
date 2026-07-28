@@ -10,7 +10,7 @@ from collections import deque
 from src.core import model as model_settings
 from src.core.model import PokerNetwork, encode_state, set_verbose
 from src.utils import settings
-from src.utils.logging import apply_action_with_logging
+from src.utils.logging_methods import apply_action_with_logging
 from src.utils.traversal_diagnostics import (
     TraversalDiagnostics,
     TraversalFailure,

@@ -21,7 +21,7 @@ sys.modules.setdefault("pandas", make_stub("pandas"))
 sys.modules.setdefault("seaborn", make_stub("seaborn"))
 
 import scripts.visualize_tournament as tournament_mod
-from src.utils.logging import apply_action_with_logging
+from src.utils.logging_methods import apply_action_with_logging
 
 
 class DummyInvalidAgent:

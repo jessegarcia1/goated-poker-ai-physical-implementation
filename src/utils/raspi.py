@@ -1,5 +1,4 @@
 #raspi.py
-from picamera2 import Picamera2
 import cv2
 import time
 import numpy as np
@@ -18,19 +17,25 @@ def capture_photo(camera_num: int, file_name: str=None):
         camera_num: Number of the camera to take the photo, 0 indexing
         file_name: Name of the image file to save
     Returns:
-        Image of photo in np array
+        Image of photo in python list (so it can be sent via json)
     """
-    picam2 = Picamera2(camera_num=camera_num)
-    camera_config = picam2.create_still_configuration()
-    picam2.configure(camera_config)
+    cap = cv2.VideoCapture(camera_num)
 
-    picam2.start()
-    time.sleep(2)
-    frame = picam2.capture_array()
-    bgr = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_YUYV) # opencv used to save and color correct image
-    cv2.imwrite(filename=file_name, img=bgr) 
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open camera {camera_num}")
+
+    # Some cameras need a few frames "flushed" before the image is stable
+    for _ in range(5):
+        ret, frame = cap.read()
+
+    ret, frame = cap.read()
+
+    if file_name != None:
+        cv2.imwrite(filename=file_name, img=frame)
+
+    cap.release()
     
-    return np.array(bgr)
+    return np.array(frame).tolist()
 
 @dataclass
 class PhysicalGameState:
