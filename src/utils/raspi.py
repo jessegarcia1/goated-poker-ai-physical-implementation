@@ -1,8 +1,9 @@
 #raspi.py
 import cv2
-import time
+from pokers import State, Stage, Card
 import numpy as np
 import serial
+
 from dataclasses import dataclass
 
 """
@@ -76,6 +77,74 @@ def get_serial_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
             small_blind=small_blind,
             big_blind=big_blind,
         )
+        
+def card_to_string(card: Card) -> str:
+    """Convert a poker card to a json parsable string."""
+    suits = {0: "C", 1: "D", 2: "H", 3: "S"}
+    ranks = {0: "2", 1: "3", 2: "4", 3: "5", 4: "6", 5: "7", 6: "8", 
+             7: "9", 8: "T", 9: "J", 10: "Q", 11: "K", 12: "A"}
+    
+    return f"{suits[int(card.suit)]}{ranks[int(card.rank)]}"
+
+def create_state_json_payload(state: State, n_players: int, seed: int) -> dict:
+    """
+        Create a json parsable payload of a State that can be sent via FastAPI.
+        
+        Args:
+            state: The current State of the poker game to send
+            n_players: Number of players in the game
+            seed: The random seed the State was created with
+        Returns: 
+            json parsable dict.
+    """
+    # Primitive
+    button = state.button
+    current_player = state.current_player
+    pot = state.pot
+    min_bet = state.min_bet
+    final_state = state.final_state
+
+    # list[str]
+    public_cards_strings = [card_to_string(card) for card in state.public_cards]
+    deck_strings = [card_to_string(card) for card in state.deck]
+
+    # list[str] (stringified enums)
+    legal_actions = [int(action) for action in state.legal_actions]
+
+    # Build a payload entry for every player instead of just players_state[0]
+    players_state_payload = []
+    for player_state in state.players_state:
+        players_state_payload.append({
+            "active": player_state.active,
+            "bet_chips": player_state.bet_chips,
+            "hand": [card_to_string(card) for card in player_state.hand],  # should be rebuilt as tuple[Card, Card]
+            "player": player_state.player,
+            "pot_chips": player_state.pot_chips,
+            "reward": player_state.reward,
+            "stake": player_state.stake,
+        })
+
+    stage = int(state.stage)
+
+    payload = {
+        "n_players": n_players,
+        "button": button,
+        "current_player": current_player,
+        "pot": pot,
+        "min_bet": min_bet,
+        "final_state": final_state,
+        "public_cards": public_cards_strings,
+        "deck": deck_strings,
+        "legal_actions": legal_actions,
+        "players_state": players_state_payload,
+        "stage": stage,
+        "seed": seed
+    }
+    
+    print(payload)
+    
+    return payload
+    
 
 
 if __name__ == '__main__':

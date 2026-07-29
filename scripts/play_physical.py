@@ -1,12 +1,13 @@
 import pokers as pkrs
 import random
 import requests
-import time
+import cv2
+import numpy as np
 
-from pokers import Card, Action, State
+from pokers import Card, Action, State, ActionEnum
 from scripts.play_helpers import card_to_string, get_action_description, get_human_action, display_game_state
 from src.utils import apply_action_with_logging
-from src.utils.raspi import capture_photo, get_serial_info
+from src.utils.raspi import capture_photo, get_serial_info, create_state_json_payload
 from src.routes.routes import urls, routes
 from src.utils.actions import raise_bounds
 
@@ -38,6 +39,7 @@ class PhysicalGame:
         self.big_blind = big_blind
         self.num_human_players = n_players - num_agents
         self.num_agents = num_agents
+        self.seed = None
 
         # Humans occupy first N seats by default
         self.human_positions = list(range(self.num_human_players))
@@ -54,6 +56,14 @@ class PhysicalGame:
         
         self.state = None
         self.agents = [None] * n_players
+        
+    def action_enum_from_int(self, action_int: int) -> ActionEnum:
+        """
+            Returns an ActionEnum from an int(Action).
+        """
+        actions = {0: ActionEnum.Fold, 1: ActionEnum.Check, 2: ActionEnum.Call, 3: ActionEnum.Raise}
+        action = actions[action_int]
+        return action
         
     def handle_post_request(self, payload: dict, route_key: str, timeout: float = 10.0):
         """
@@ -89,12 +99,7 @@ class PhysicalGame:
         """
             Create a new poker state using current bankrolls.
         """        
-        print("debug")
-        print(type(self.n_players))
-        print(type(self.button_pos))
-        print(type(self.small_blind))
-        print(type(self.big_blind))
-        print(type(self.initial_stake))
+        self.seed = random.randint(0, 10000)
         
         self.state = State.from_seed(
             n_players=self.n_players,
@@ -102,10 +107,9 @@ class PhysicalGame:
             sb=self.small_blind,
             bb=self.big_blind,
             stake=self.initial_stake,
-            seed=random.randint(0, 10000),
+            seed=self.seed
         )
 
-        print("Debug")
         # Manually overwrite player stakes. 
         # Agent stakes will be tracked and updated.
         # Human stakes will always be the initial_stake becausee these cannot be tracked.
@@ -160,7 +164,8 @@ class PhysicalGame:
             max_tries = 3 # This will capture 3 photos at max
             
             for attempt in range(max_tries):
-                image = capture_photo(0)
+                #image = capture_photo(0, "test123.jpg")
+                image = cv2.imread("test123.jpg").tolist()
                 payload = {"image_as_list": image, "count": count}
                 
                 print('Sending photo...\n')
@@ -170,7 +175,8 @@ class PhysicalGame:
                 print("detection status: ", status)
                 
                 if status == "ok":
-                    return data["card_list"]
+                    card_list = [Card.from_string(card) for card in data["card_list"]]
+                    return card_list
                 
             raise Exception(f"ERROR: {count} Cards failed to be set.")
 
@@ -294,11 +300,16 @@ class PhysicalGame:
                 else:
                     # Abbreviated state display for AI turns
                     print(f"\nPlayer {current_player_pos}'s turn")
+                    
                     # self.agents is originally assigned agents based on pos
-                    agent = self.agents[current_player_pos]
-                    if agent is None:
-                        raise RuntimeError(f"No agent loaded for player {current_player_pos}")
-                    action = agent.choose_action(state) 
+                    state_payload = create_state_json_payload(self.state, self.n_players, self.seed)
+                    choose_action_payload = {"game_state": state_payload, "agent_pos": current_player_pos}
+                    data = self.handle_post_request(choose_action_payload, "choose-action")
+                    
+                    action_int = data["action"]
+                    action_amount = data["amount"]
+                    action = Action(self.action_enum_from_int(action_int), action_amount)
+                                    
                     print(f"Player {current_player_pos} chose: {get_action_description(action)}")
 
                 action_with_rounded_amount = self.get_nearest_quarter_amount(action)
