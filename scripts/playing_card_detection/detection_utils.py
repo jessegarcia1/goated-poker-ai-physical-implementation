@@ -1,6 +1,7 @@
 from ultralytics import YOLO
 from pokers import Card
-from collections import Counter
+import cv2
+import numpy as np
 
 MODEL_PATH = "scripts/playing_card_detection/yolov8m_synthetic.pt"
 CLASS_NAMES = [
@@ -31,30 +32,25 @@ def detect_cards(image, count) -> list[Card] | None:
         detection pass, or None if this couldn't be achieved after 3 attempts.
     """
     model = YOLO(MODEL_PATH)
+    results = model(image, conf=0.05, verbose=False)[0]
+    detected_cards_str = []
+    
+    for box in results.boxes:
+        cls = int(box.cls[0])
+        detected_cards_str.append(CLASS_NAMES[cls])
+        
+    print("LENGTH CARD LIST: ", len(detected_cards_str))
+        
+    if len(detected_cards_str) == count:
+        return detected_cards_str
 
-    def run_detection():
-        results = model(image, verbose=False)[0]
-
-        detected_cards = []
-        for box in results.boxes:
-            cls = int(box.cls[0])
-            detected_cards.append(CLASS_NAMES[cls])
-
-        return [Card.from_string(card) for card in detected_cards]
-
-    max_tries = 3
-    card_list = []
-    for attempt in range(max_tries):
-        card_list = run_detection()
-
-        if len(card_list) != count:
-            continue
-
-        confirm_list = run_detection()
-
-        # Detected cards must equal each other (order does not matter w/ Counter)
-        if len(confirm_list) == count and Counter(card_list) == Counter(confirm_list):
-            return card_list
-
-    print("card_list FAILED to match count: ", card_list)
+    print("card_list FAILED to match count. Card List: ", detected_cards_str)
     return None
+
+if __name__ == "__main__":
+    card_list = detect_cards(np.array(cv2.imread("/Users/Jesse/Documents/csShi/goated-poker-ai-physical-implementation/test12345.jpg")), 2)
+    
+    print(card_list[0].suit)
+    print(card_list[0].rank)
+    print(card_list[1].suit)
+    print(card_list[1].rank)

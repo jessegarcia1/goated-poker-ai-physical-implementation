@@ -1,11 +1,12 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 import uvicorn
-from pokers import State
 from typing import Optional
+import numpy as np
 
 from scripts.playing_card_detection.detection_utils import detect_cards
 from src.backend.agents import Agents
+from src.backend.backend_utils import create_state_from_json, GameStatePayload
 
 # how to run: python3 -m src.backend.endpoints
 # to expose server to all computers on the network: below in code
@@ -20,15 +21,10 @@ class CardImage(BaseModel):
 class AgentsInfo(BaseModel):
     n_players: int
     n_agents: int
-
-# Since State from pokers is a class built in another language pydantic cannot parse it and
-# does not know how to build it. So I might have to pass in each param to a state and build
-# it here.
-class GameState(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
     
+class GameState(BaseModel):
     agent_pos: int
-    game_state: State
+    game_state: GameStatePayload
 
 @app.get("/is-backend-up", status_code=200)
 def is_backend_up():
@@ -36,6 +32,7 @@ def is_backend_up():
 
 @app.post("/load-models", status_code=200)
 def load_models(data: AgentsInfo):
+    global agents
     n_players = data.n_players
     n_agents = data.n_agents
     
@@ -49,7 +46,7 @@ def card_detection(data: CardImage):
     if agents is None:
         raise HTTPException(status_code=400, detail="Models not loaded yet. Call /load-models first.")
     
-    image = data.image_as_list
+    image = np.array(data.image_as_list)
     count = data.count
     
     card_list = detect_cards(image, count)
@@ -57,7 +54,7 @@ def card_detection(data: CardImage):
     
     status = "ok"    
     if card_list == None:
-        status == "failed"
+        status = "failed"
         
     return {"status": status, "card_list": card_list}
 
@@ -67,14 +64,18 @@ def choose_action(data: GameState):
     
     if agents is None:
         raise HTTPException(status_code=400, detail="Models not loaded yet. Call /load-models first.")
-
-    agent_pos = data.agent_pos
-    game_state = data.game_state
     
+    game_state = data.game_state
+    agent_pos = data.agent_pos
+    
+    game_state = create_state_from_json(game_state)
     agent = agents.agent_list[agent_pos]
+    
     action = agent.choose_action(game_state)
     
-    return {"action": action.action, "amount": action.amount}
+    print("Action: ", action)
+    
+    return {"action": int(action.action), "amount": action.amount}
     
 
 # used to expose backend to other local guys

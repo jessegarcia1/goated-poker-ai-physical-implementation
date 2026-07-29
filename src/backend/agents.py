@@ -22,7 +22,7 @@ class Agents:
         self.agent_positions = list(
             range(self.num_human_players, n_players)
         )
-        
+
     def load_agents(self):
         """
         Load AI agents into agent positions.
