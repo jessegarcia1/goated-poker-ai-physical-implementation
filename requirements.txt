@@ -8,3 +8,5 @@ opencv-python
 python-dotenv
 setuptools
 picamera2
+gpiozero
+lgpio
