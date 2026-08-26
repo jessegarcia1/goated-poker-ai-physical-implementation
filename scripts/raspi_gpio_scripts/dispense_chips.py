@@ -116,18 +116,30 @@ def homing_sequence():
     print("Homing complete.")
 
     return total_steps
+
+def move_pot():
+    POT_STEP_DELAY = 0.00006
+    print("Moving Right (up) until limt switch is pressed...")
+    LEFT()
+    
+    while not LIMIT_SWITCH.is_pressed:
+        move(1, POT_STEP_DELAY)
+
+def test_buttons():
+    while True:
+        if LIMIT_SWITCH.is_pressed:
+            print("closed")
+        else:
+            print("open")
+        sleep(0.1)
         
 try:
     #little_steps("R", 100)
     #dispense(15)
-    homing_sequence()
+    #homing_sequence()
+    move_pot()
     
-    # while True:
-    #     if LIMIT_SWITCH.is_pressed:
-    #         print("closed")
-    #     else:
-    #         print("open")
-    #     sleep(0.1)
+
 
 except KeyboardInterrupt:
     # So gpiozero can perfo
