@@ -3,11 +3,13 @@ import random
 import requests
 import cv2
 import numpy as np
+import time
 
 from pokers import Card, Action, State, ActionEnum
 from scripts.play_helpers import card_to_string, get_action_description, get_human_action, display_game_state
+from scripts.raspi_gpio_scripts.dispense_chips import dispense
 from src.utils import apply_action_with_logging
-from src.utils.raspi import capture_photo, get_serial_info, create_state_json_payload
+from src.utils.raspi import capture_photo, get_serial_gamestate_info, create_state_json_payload
 from src.routes.routes import urls, routes
 from src.utils.actions import raise_bounds
 
@@ -164,8 +166,8 @@ class PhysicalGame:
             max_tries = 3 # This will capture 3 photos at max
             
             for attempt in range(max_tries):
-                #image = capture_photo(0, "test123.jpg")
-                image = cv2.imread("test123.jpg").tolist()
+                image = capture_photo(0, "test123.jpg")
+                #image = cv2.imread("test123.jpg").tolist()
                 payload = {"image_as_list": image, "count": count}
                 
                 print('Sending photo...\n')
@@ -200,18 +202,23 @@ class PhysicalGame:
         print(f"Rounded {amount} to {nearest_quarter_amount}.")
         return action
         
-    def set_agent_hand(self, agent_position: int, state:pkrs.State):
+    def set_agent_hand(self, agent_position: int, state:pkrs.State, temp_agent_num:int):
         """
         Sets the players_state of the agent's position to have the inputed cards
         
         Returns the state with the new agents's hand in place.
         """
         # grab cards from player input for now
-        ai_hand = self.set_cards(2, f"Enter hand for agent position: {agent_position}")
+        ai_hand = self.set_cards(4, f"Enter hand for agent positions: {agent_position}")
         # Assign state of this agent to have inputed cards as hand
         players_copy = state.players_state # players is a copy, must reasign
         ai_state = players_copy[agent_position]
-        ai_state.hand = (ai_hand[0], ai_hand[1])
+        # agent 1 gets first two cards, agent 2 get second 2 cards
+        if temp_agent_num == 1:
+            ai_state.hand = (ai_hand[0], ai_hand[1])
+        else: 
+            ai_state.hand = (ai_hand[2], ai_hand[3])
+
         # Rewrite ai state in players
         players_copy[agent_position] = ai_state
         # Assign players back to original state
@@ -233,9 +240,9 @@ class PhysicalGame:
 
         data = self.handle_post_request(payload, "load-models")
         status = data["status"]
-        print("status: ", status)
+        print("load-models status: ", status)
         if status == "failed":
-            raise Exception("Failed loading models")
+            raise Exception("Failed to load the models")
 
         num_games = 0
         total_profit = 0
@@ -258,14 +265,15 @@ class PhysicalGame:
             
             # Updates agent bankrolls, humans stay at initial_stake.
             state = self.create_state()
-            print(f"State created: {state}")
 
-            # Collect physical cards before betting starts
-            # if num_ai != len(image_list):
-            #     print(f"The number of ai models, {num_ai} does not match the amount of images given: {len(image_list)}")
-            #     raise ValueError("Number of models does not match with number of images in set_ai_hands.")
+            # for now there are only going to be 2 agents. The way I have the recognition 
+            # model working is that it snaps a photo of all 4 cards at once. I am using a 
+            # roundabout way to make sure the first agent gets the first 2 cards and the
+            # second agent gets the third and fourth cards.
+            temp_agent_num = 1
             for agent_pos in self.agent_positions:
-                state = self.set_agent_hand(agent_pos, state)
+                state = self.set_agent_hand(agent_pos, state, temp_agent_num)
+                temp_agent_num += 1
             
             print("Cards assigned to all players:")
             for position, player in enumerate(state.players_state):
@@ -279,7 +287,7 @@ class PhysicalGame:
                 new_stage = int(state.stage)
                 if new_stage != current_stage:
                     if new_stage == 1:  # Flop
-                        community_cards = self.set_cards(3, "Enter the 3 FLOP cards", )
+                        community_cards = self.set_cards(3, "Enter the 3 FLOP cards")
                     elif new_stage == 2:  # Turn
                         turn = self.set_cards(1, "Enter the TURN card")
                         community_cards = community_cards + turn
@@ -300,6 +308,7 @@ class PhysicalGame:
                 else:
                     # Abbreviated state display for AI turns
                     print(f"\nPlayer {current_player_pos}'s turn")
+                    time.sleep(3)
                     
                     # self.agents is originally assigned agents based on pos
                     state_payload = create_state_json_payload(self.state, self.n_players, self.seed)
@@ -311,6 +320,7 @@ class PhysicalGame:
                     action = Action(self.action_enum_from_int(action_int), action_amount)
                                     
                     print(f"Player {current_player_pos} chose: {get_action_description(action)}")
+                    time.sleep(3)
 
                 action_with_rounded_amount = self.get_nearest_quarter_amount(action)
                 
@@ -368,7 +378,7 @@ if __name__ == "__main__":
         raise Exception("Backend is not up!")
     
     print("Waiting for arduino information")
-    game_state = get_serial_info(skip=True)
+    game_state = get_serial_gamestate_info(skip=True)
         
     PhysicalGame(
         n_players=game_state.num_players, 

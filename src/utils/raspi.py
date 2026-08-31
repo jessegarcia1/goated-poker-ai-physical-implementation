@@ -1,8 +1,9 @@
 #raspi.py
 import cv2
-from pokers import State, Stage, Card
+from pokers import State, Card
 import numpy as np
 import serial
+import time
 
 from dataclasses import dataclass
 
@@ -47,7 +48,7 @@ class PhysicalGameState:
     small_blind: float
     big_blind: float
 
-def get_serial_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
+def get_serial_gamestate_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
     if skip:
         return PhysicalGameState(
             num_players=6,
@@ -77,6 +78,66 @@ def get_serial_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
             small_blind=small_blind,
             big_blind=big_blind,
         )
+
+def get_serial_pot_weight(port='/dev/ttyACM0', baudrate=9600):
+    """
+    Communicates with the Arduino over serial to tare the scale
+    and retrieve the average pot weight.
+
+    Returns:
+        float: The average weight reported by the Arduino in grams.
+
+    Raises:
+        RuntimeError: If the tare or weight reading times out.
+    """
+    print("Waiting for scale to get five weights..." )
+    for i in range(5):
+        print(i + 1)
+        time.sleep(.5)
+   
+    TIMEOUT = 20 # in seconds
+
+    ser = serial.Serial(port, baudrate, timeout=1)
+    
+    # Clear any startup messages already waiting in the serial buffer
+    ser.reset_input_buffer()
+
+    print("Sending TARE command...")
+    ser.write(b"GET_WEIGHT\n")
+    ser.flush()
+
+    start_time = time.time()
+
+    while time.time() - start_time < TIMEOUT:
+
+        line = ser.readline().decode().strip()
+        if not line:
+            continue
+
+        print(f"Arduino: {line}")
+
+        if line.startswith("AVERAGE_WEIGHT:"):
+            try:
+                weight_string = line.split(":", 1)[1].strip()
+                weight = float(weight_string)
+
+                print(f"Average pot weight: {weight:.2f} g")
+                return weight
+
+            except (IndexError, ValueError) as error:
+                raise RuntimeError(
+                    f"Could not parse weight from: {line}"
+                ) from error
+
+    # Timeout occurred
+    raise RuntimeError(
+        "Timed out waiting for the Arduino to return the weight."
+    )
+
+def get_raise_amount():
+    weight = get_serial_pot_weight()
+    rounded_num_chips_raised = round(weight / 10.5)
+    return rounded_num_chips_raised
         
 def card_to_string(card: Card) -> str:
     """Convert a poker card to a json parsable string."""
@@ -144,9 +205,6 @@ def create_state_json_payload(state: State, n_players: int, seed: int) -> dict:
     print(payload)
     
     return payload
-    
-
 
 if __name__ == '__main__':
-    capture_photo(0, "test12.jpg")
-    
+    get_serial_pot_weight()

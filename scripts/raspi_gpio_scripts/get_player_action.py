@@ -5,7 +5,7 @@ from pokers import ActionEnum
 # Button is input device
 CHECK_CALL = Button(16, pull_up=True)
 RAISE = Button(20, pull_up=True)
-FOLD = Button(26, pull_up=True)
+FOLD = Button(12, pull_up=True)
 
 pending_action = None
 
@@ -25,12 +25,13 @@ CHECK_CALL.when_pressed = return_check_call
 RAISE.when_pressed = return_raise
 FOLD.when_pressed = return_fold
 
-def wait_for_button_press():
+def wait_for_player_action():
     global pending_action
     pending_action = None  # clear stale value
     
     while pending_action is None:
-        sleep(0.01)
+        print("none")
+        sleep(0.05)
     action = pending_action
     pending_action = None  
     return action
@@ -48,11 +49,10 @@ def test_buttons():
         sleep(0.05)
 
 try:
-    # while True:
-    #     action = wait_for_button_press()
-    #     print(f"Action selected: {action}")
-    
-    test_buttons()
+    # action = wait_for_button_press()
+    # print(f"Action selected: {action}")
+    # test_buttons()
+    pass
 
 except KeyboardInterrupt:
     # So gpiozero can perform automatic cleanup
