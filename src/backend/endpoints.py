@@ -35,7 +35,7 @@ def load_models(data: AgentsInfo):
     global agents
     n_players = data.n_players
     n_agents = data.n_agents
-    
+
     agents = Agents(n_players, n_agents)
     status = agents.load_agents()
     

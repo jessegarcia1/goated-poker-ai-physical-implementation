@@ -27,6 +27,7 @@ class Agents:
         """
         Load AI agents into agent positions.
         """
+        print("agent_pos: ", self.agent_positions)
         
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Using device: {device}")
@@ -34,7 +35,7 @@ class Agents:
         player_num_path = str(self.n_players) + "_player"
         
         base_path = f"models/standard/{player_num_path}/checkpoint_mixed"
-        model_paths = [
+        potential_model_paths = [
             base_path + '/*checkpoint_iter_mixed_iter_33600.pt',
             base_path + '/*checkpoint_iter_mixed_iter_33700.pt',
             base_path + '/*checkpoint_iter_mixed_iter_33800.pt',
@@ -42,7 +43,10 @@ class Agents:
             base_path + '/*checkpoint_iter_mixed_iter_400000.pt',
         ]
 
-        print(f"Selected {len(model_paths)} models for this game:")
+        # get get only 'num_agents' number of model paths
+        model_paths = potential_model_paths[:self.num_agents]
+
+        print(f"Selected {self.num_agents} models for this game:")
         for model_idx, path in enumerate(model_paths):
             print(f"  Model {model_idx+1}: {os.path.basename(path)}")
 

@@ -3,7 +3,7 @@ from pokers import Card
 import cv2
 import numpy as np
 
-MODEL_PATH = "scripts/playing_card_detection/yolov8m_synthetic.pt"
+MODEL_PATH = "scripts/playing_card_detection/yolov8s_playing_cards.pt"
 CLASS_NAMES = [
     "CT", "DT", "HT", "ST",
     "C2", "D2", "H2", "S2",
@@ -20,7 +20,26 @@ CLASS_NAMES = [
     "CQ", "DQ", "HQ", "SQ",
 ]
 
-def detect_cards(image, count) -> list[Card] | None:
+
+def preprocess_image(image):
+    """
+    Brightens and sharpens a dark/low-contrast webcam image so the
+    model has an easier time detecting cards.
+    """
+    # brighten the image
+    image = cv2.convertScaleAbs(image, alpha=2.3, beta=30)
+
+    # boost local contrast (helps corner rank/suit stand out)
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    image = cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+    cv2.imwrite("processed_image2.jpg", image)
+
+    return image
+
+def detect_cards(image, count) -> list[str] | None:
     """
     Detects playing cards in a single image.
 
@@ -28,11 +47,11 @@ def detect_cards(image, count) -> list[Card] | None:
         image: numpy array 
         count: number of cards to be detected in the image
     Returns:
-        List of detected Card objects, confirmed by a second consistent
-        detection pass, or None if this couldn't be achieved after 3 attempts.
+        List of detected Cards as strings
     """
     model = YOLO(MODEL_PATH)
-    results = model(image, conf=0.05, verbose=False)[0]
+    processed_image = preprocess_image(image)
+    results = model(processed_image, conf=0.05, verbose=False)[0]
     detected_cards_str = []
     
     for box in results.boxes:
@@ -48,9 +67,6 @@ def detect_cards(image, count) -> list[Card] | None:
     return None
 
 if __name__ == "__main__":
-    card_list = detect_cards(np.array(cv2.imread("/Users/Jesse/Documents/csShi/goated-poker-ai-physical-implementation/test12345.jpg")), 2)
+    card_list = detect_cards(np.array(cv2.imread("/Users/Jesse/Documents/csShi/goated-poker-ai-physical-implementation/test123.jpg")), 2)
     
-    print(card_list[0].suit)
-    print(card_list[0].rank)
-    print(card_list[1].suit)
-    print(card_list[1].rank)
+    print(card_list[0])
