@@ -4,7 +4,7 @@ from time import sleep
 STEP_DELAY = 0.00009
 STEPS_PER_CHIP = 680
 
-# pin numbers per agent: (enable, direction, step)
+# pin numbers per agent: (enable, direction, pulse)
 AGENT_PINS = {
     1: (2, 3, 4),
     2: (10, 9, 11),
@@ -117,12 +117,10 @@ def homing_sequence(agent_num:int):
 
         RIGHT(direction)
 
-        total_steps = 0
-        # move until off the limit switch
-        while limit_switch.is_pressed:
-            move(step, 1, step_delay=HOMING_STEP_DELAY)
-            total_steps += 1
-
+        # move 300 steps away after finding limit to not double count a switch bounce
+        move(step, 300, step_delay=HOMING_STEP_DELAY)
+        
+        total_steps = 300
         print("Moving RIGHT to find second limit...")
 
         while not limit_switch.is_pressed:
@@ -150,7 +148,12 @@ def homing_sequence(agent_num:int):
         limit_switch.close()
 
 
-def move_pot():
+def move_pot(high:bool):
+    """
+    Moves the pot up and down. 
+    If high is True, move the pot to the high position.
+    If high is False, move the pot to the low position.
+    """
     enable = LED(POT_PINS[0])
     direction = LED(POT_PINS[1])
     step = LED(POT_PINS[2])
@@ -158,11 +161,19 @@ def move_pot():
 
     try:
         POT_STEP_DELAY = 0.00006
-        print("Moving Right (up) until limt switch is pressed...")
-        LEFT(direction)
+        if high:
+            
+            print("Moving pot Right (Up)...")
+            RIGHT(direction)
 
-        while not limit_switch.is_pressed:
-            move(step, 1, POT_STEP_DELAY)
+            move(step, 6000, POT_STEP_DELAY)
+
+        if not high:
+            print("Moving pot Left (Down)...")
+            LEFT(direction)
+
+            move(step, 6000, POT_STEP_DELAY)
+        #move(step, 15000, POT_STEP_DELAY)
 
     finally:
         enable.close()
@@ -185,13 +196,13 @@ def test_buttons():
     finally:
         limit_switch.close()
 
+if __name__ == '__main__':
+    try:
+        # dispense(15, 1)
+        homing_sequence(agent_num=1)
+        # move_pot(high=True)
+        pass
 
-try:
-    # dispense(15, 1)
-    # homing_sequence(agent_num=1)
-    # move_pot()
-    pass
-
-except KeyboardInterrupt:
-    # So gpiozero can perform automatic cleanup
-    print("Ending program")
+    except KeyboardInterrupt:
+        # So gpiozero can perform automatic cleanup
+        print("Ending program")

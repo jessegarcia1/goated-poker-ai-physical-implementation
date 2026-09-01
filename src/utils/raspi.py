@@ -51,7 +51,7 @@ class PhysicalGameState:
 def get_serial_gamestate_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
     if skip:
         return PhysicalGameState(
-            num_players=6,
+            num_players=4,
             num_agents=2,
             initial_stake=10.00,
             button_pos=1,
@@ -79,21 +79,23 @@ def get_serial_gamestate_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
             big_blind=big_blind,
         )
 
-def get_serial_pot_weight(port='/dev/ttyACM0', baudrate=9600):
+def get_serial_pot_amount(port='/dev/ttyACM0', baudrate=9600, tare=False):
     """
     Communicates with the Arduino over serial to tare the scale
-    and retrieve the average pot weight.
+    and retrieve the average pot weight. 
+    It then divides it by the weight of a chip to get the amount of chips in the pot
 
     Returns:
-        float: The average weight reported by the Arduino in grams.
+        float: The value of the current pot. This value gets zero'd after it is read.
 
     Raises:
         RuntimeError: If the tare or weight reading times out.
     """
     print("Waiting for scale to get five weights..." )
-    for i in range(5):
-        print(i + 1)
-        time.sleep(.5)
+    if not tare:
+        for i in range(5):
+            print(i + 1)
+            time.sleep(.5)
    
     TIMEOUT = 20 # in seconds
 
@@ -102,7 +104,7 @@ def get_serial_pot_weight(port='/dev/ttyACM0', baudrate=9600):
     # Clear any startup messages already waiting in the serial buffer
     ser.reset_input_buffer()
 
-    print("Sending TARE command...")
+    print("Sending GET_WEIGHT command...")
     ser.write(b"GET_WEIGHT\n")
     ser.flush()
 
@@ -122,7 +124,10 @@ def get_serial_pot_weight(port='/dev/ttyACM0', baudrate=9600):
                 weight = float(weight_string)
 
                 print(f"Average pot weight: {weight:.2f} g")
-                return weight
+                rounded_num_chips = round(weight / 10.5) # 10.5 is the weight of 1 chip
+                pot_value = rounded_num_chips * .25
+                print(f"Current pot value: {pot_value}")
+                return pot_value
 
             except (IndexError, ValueError) as error:
                 raise RuntimeError(
@@ -133,11 +138,6 @@ def get_serial_pot_weight(port='/dev/ttyACM0', baudrate=9600):
     raise RuntimeError(
         "Timed out waiting for the Arduino to return the weight."
     )
-
-def get_raise_amount():
-    weight = get_serial_pot_weight()
-    rounded_num_chips_raised = round(weight / 10.5)
-    return rounded_num_chips_raised
         
 def card_to_string(card: Card) -> str:
     """Convert a poker card to a json parsable string."""
@@ -207,4 +207,4 @@ def create_state_json_payload(state: State, n_players: int, seed: int) -> dict:
     return payload
 
 if __name__ == '__main__':
-    get_serial_pot_weight()
+    get_serial_pot_amount()

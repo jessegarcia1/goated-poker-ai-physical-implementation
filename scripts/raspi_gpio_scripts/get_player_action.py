@@ -1,9 +1,8 @@
-from gpiozero import LED, Button
+from gpiozero import Button
 from time import sleep
-from pokers import ActionEnum
 
 # Button is input device
-CHECK_CALL = Button(16, pull_up=True)
+CHECK_CALL = Button(13, pull_up=True)
 RAISE = Button(20, pull_up=True)
 FOLD = Button(12, pull_up=True)
 
@@ -11,15 +10,15 @@ pending_action = None
 
 def return_check_call():
     global pending_action
-    pending_action = ActionEnum.Call
+    pending_action = "check"
 
 def return_raise():
     global pending_action
-    pending_action = ActionEnum.Raise
+    pending_action = "raise"
 
 def return_fold():
     global pending_action
-    pending_action = ActionEnum.Fold
+    pending_action = "fold"
 
 CHECK_CALL.when_pressed = return_check_call
 RAISE.when_pressed = return_raise
@@ -29,11 +28,12 @@ def wait_for_player_action():
     global pending_action
     pending_action = None  # clear stale value
     
+    print("Waiting for player action...")
     while pending_action is None:
-        print("none")
         sleep(0.05)
     action = pending_action
     pending_action = None  
+    print("Chosen action: ", action)
     return action
 
 def test_buttons():
@@ -47,14 +47,20 @@ def test_buttons():
         else:
             print("None")
         sleep(0.05)
+        
+if __name__ == '__main__':
+    try:
+        # action = wait_for_button_press()
+        # print(f"Action selected: {action}")
+        wait_for_player_action()
+        pass
 
-try:
-    # action = wait_for_button_press()
-    # print(f"Action selected: {action}")
-    # test_buttons()
-    pass
-
-except KeyboardInterrupt:
-    # So gpiozero can perform automatic cleanup
-    print("Ending program")
-    
+    except KeyboardInterrupt:
+        # So gpiozero can perform automatic cleanup
+        print("Ending program")
+    finally:
+        for device in (CHECK_CALL, RAISE, FOLD):
+            try:
+                device.close()
+            except Exception as exc:
+                print(f"Warning: failed to close {device}: {exc}")

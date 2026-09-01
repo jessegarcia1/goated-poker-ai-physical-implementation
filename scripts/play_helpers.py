@@ -1,9 +1,10 @@
 #play_helpers.py
 import pokers as pkrs
+import time
 
 from src.utils.actions import build_raise_action, preset_raise_action, raise_bounds
 from scripts.raspi_gpio_scripts.get_player_action import wait_for_player_action
-from src.utils.raspi import get_raise_amount
+from src.utils.raspi import get_serial_pot_amount
 
 def get_action_description(action):
     """Convert a pokers action to a human-readable string."""
@@ -127,12 +128,12 @@ def get_human_action(state, player_id=0):
         
         print("Invalid action. Please try again.")
         
-def get_human_action_physical_game(state, previous_pot_weight, player_id=0):
+def get_human_action_physical_game(state, player_id:int=0):
     """Get action from human player via console input."""
     
     while True:
         action_input = wait_for_player_action()
-
+        print(state.legal_actions)
         # Process fold
         if action_input == 'fold' and pkrs.ActionEnum.Fold in state.legal_actions:
             return pkrs.Action(pkrs.ActionEnum.Fold)
@@ -140,14 +141,20 @@ def get_human_action_physical_game(state, previous_pot_weight, player_id=0):
         # Process check/call
         elif action_input == 'check':
             if pkrs.ActionEnum.Check in state.legal_actions:
+                # tare after a call
+                get_serial_pot_amount(tare=True) 
+                
                 return pkrs.Action(pkrs.ActionEnum.Check)
             elif pkrs.ActionEnum.Call in state.legal_actions:
+                # tare after a call
+                get_serial_pot_amount(tare=True) 
+                
                 return pkrs.Action(pkrs.ActionEnum.Call)
         
-        # Process raise shortcuts
+        # Process raise. Player will always add their chips to the pot, then press the button
         elif action_input == 'raise' and pkrs.ActionEnum.Raise in state.legal_actions:
             bounds = raise_bounds(state)
-            chips_raised = get_raise_amount()
+            chips_raised = get_serial_pot_amount()
             amount = chips_raised * .25
             if bounds.min_raise <= amount <= bounds.max_raise:
                 return build_raise_action(state, amount)
@@ -155,4 +162,7 @@ def get_human_action_physical_game(state, previous_pot_weight, player_id=0):
                 print(f"Amount must be between {bounds.min_raise:.2f} and {bounds.max_raise:.2f}")
         
         print("Invalid action. Please Enter your action again.")
+        
+        # tare after invalid action
+        get_serial_pot_amount(tare=True)
         

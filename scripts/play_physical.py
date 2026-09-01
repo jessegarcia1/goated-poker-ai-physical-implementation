@@ -6,16 +6,15 @@ import numpy as np
 import time
 
 from pokers import Card, Action, State, ActionEnum
-from scripts.play_helpers import card_to_string, get_action_description, get_human_action, display_game_state
-from scripts.raspi_gpio_scripts.dispense_chips import dispense
+from scripts.play_helpers import card_to_string, get_action_description, display_game_state, get_human_action_physical_game
+from scripts.raspi_gpio_scripts.dispense_chips import dispense, homing_sequence, move_pot
 from src.utils import apply_action_with_logging
-from src.utils.raspi import capture_photo, get_serial_gamestate_info, create_state_json_payload
+from src.utils.raspi import capture_photo, get_serial_gamestate_info, create_state_json_payload, get_serial_pot_amount
 from src.routes.routes import urls, routes
 from src.utils.actions import raise_bounds
 
 """
     To run: python3 -m scripts.play_physical 
-    Players 4 and five are lowkey special
 """
 class PhysicalGame:
     """
@@ -42,6 +41,9 @@ class PhysicalGame:
         self.num_human_players = n_players - num_agents
         self.num_agents = num_agents
         self.seed = None
+        self.AGENT_HANDS_CAMERA_NUM = 0
+        self.COMMUNITY_CARDS_CAMERA_NUM = 2
+        self.previous_pot_amount = 0
 
         # Humans occupy first N seats by default
         self.human_positions = list(range(self.num_human_players))
@@ -128,7 +130,7 @@ class PhysicalGame:
 
         return self.state
 
-    def set_cards(self, count: int, prompt: str=None, detect=True)-> list[Card] | None:
+    def set_cards(self, count: int, camera_num: int, prompt: str=None, detect=False)-> list[Card] | None:
         """
         Detect cards from an image or if prompt != None,
         prompt the user to enter cards from the physical table.
@@ -166,19 +168,24 @@ class PhysicalGame:
             max_tries = 3 # This will capture 3 photos at max
             
             for attempt in range(max_tries):
-                image = capture_photo(0, "test123.jpg")
-                #image = cv2.imread("test123.jpg").tolist()
-                payload = {"image_as_list": image, "count": count}
-                
-                print('Sending photo...\n')
-                data = self.handle_post_request(payload, "card-detection")
+                try:
+                    image = capture_photo(camera_num, "test123.jpg")
 
-                status = data["status"]
-                print("detection status: ", status)
-                
-                if status == "ok":
-                    card_list = [Card.from_string(card) for card in data["card_list"]]
-                    return card_list
+                    payload = {"image_as_list": image, "count": count}
+                    
+                    print('Sending photo...\n')
+                    data = self.handle_post_request(payload, "card-detection", timeout=20)
+
+                    status = data["status"]
+                    print("detection status: ", status)
+                    
+                    if status == "ok":
+                        card_list = [Card.from_string(card) for card in data["card_list"]]
+                        return card_list
+                    
+                except requests.exceptions.RequestException as e:
+                    print(e)
+                    pass
                 
             raise Exception(f"ERROR: {count} Cards failed to be set.")
 
@@ -209,7 +216,7 @@ class PhysicalGame:
         Returns the state with the new agents's hand in place.
         """
         # grab cards from player input for now
-        ai_hand = self.set_cards(4, f"Enter hand for agent positions: {agent_position}")
+        ai_hand = self.set_cards(count=4, camera_num=self.AGENT_HANDS_CAMERA_NUM, prompt=f"Scanning cards for agent position: {agent_position}")
         # Assign state of this agent to have inputed cards as hand
         players_copy = state.players_state # players is a copy, must reasign
         ai_state = players_copy[agent_position]
@@ -235,7 +242,6 @@ class PhysicalGame:
             - Set each AI's initial stake
             - Set number of players and how many AI models there will be.
         """
-        
         payload = {"n_players": self.n_players, "n_agents": self.num_agents}
 
         data = self.handle_post_request(payload, "load-models")
@@ -287,24 +293,37 @@ class PhysicalGame:
                 new_stage = int(state.stage)
                 if new_stage != current_stage:
                     if new_stage == 1:  # Flop
-                        community_cards = self.set_cards(3, "Enter the 3 FLOP cards")
+                        community_cards = self.set_cards(count=3, camera_num=self.COMMUNITY_CARDS_CAMERA_NUM, prompt="Enter the 3 FLOP cards")
                     elif new_stage == 2:  # Turn
-                        turn = self.set_cards(1, "Enter the TURN card")
-                        community_cards = community_cards + turn
+                        turn = self.set_cards(count=4, camera_num=self.COMMUNITY_CARDS_CAMERA_NUM, prompt="Enter the TURN card")
+                        community_cards = turn
                     elif new_stage == 3:  # River
-                        river = self.set_cards(1, "Enter the RIVER card")
-                        community_cards = community_cards + river
+                        river = self.set_cards(count=5, camera_num=self.COMMUNITY_CARDS_CAMERA_NUM, prompt="Enter the RIVER card")
+                        community_cards = river
                     current_stage = new_stage
 
                 if (current_stage != 0):
                     state.public_cards = community_cards
                 
                 current_player_pos = state.current_player
+                action_with_rounded_amount = None
                 # Display game state before human acts
                 if current_player_pos in self.human_positions:
+                    temp_pot_amount = self.previous_pot_amount
+                    self.previous_pot_amount = get_serial_pot_amount() + temp_pot_amount
+                    print("self.previous_pot_amount: ", self.previous_pot_amount)
                     display_game_state(state, current_player_pos, human_positions=self.human_positions)
-                    action = get_human_action(state, current_player_pos)
+                    
+                    action = get_human_action_physical_game(state, current_player_pos)
                     print(f"You chose: {get_action_description(action)}")
+                    
+                    # add action amount to previous_pot_weight
+                    temp_pot_amount = self.previous_pot_amount
+                    self.preprevious_pot_amount = temp_pot_amount + action.amount
+                    print("self.previous_pot_amount again: ", self.previous_pot_amount)
+                    
+                    action_with_rounded_amount = self.get_nearest_quarter_amount(action)
+
                 else:
                     # Abbreviated state display for AI turns
                     print(f"\nPlayer {current_player_pos}'s turn")
@@ -320,10 +339,18 @@ class PhysicalGame:
                     action = Action(self.action_enum_from_int(action_int), action_amount)
                                     
                     print(f"Player {current_player_pos} chose: {get_action_description(action)}")
-                    time.sleep(3)
+                    time.sleep(5)
 
-                action_with_rounded_amount = self.get_nearest_quarter_amount(action)
+                    action_with_rounded_amount = self.get_nearest_quarter_amount(action)
+                    
+                    # only dispense for agents
+                    agent_num = 1
+                    if current_player_pos == 3:
+                        agent_num = 2
+                    num_chips_to_dispense = action_with_rounded_amount.amount / .25
+                    dispense(num_dispensed=num_chips_to_dispense, agent_num=agent_num)
                 
+
                 # Apply the action
                 new_state, log_file, status = apply_action_with_logging(
                     state,
@@ -377,9 +404,17 @@ if __name__ == "__main__":
     if (r.status_code != 200):
         raise Exception("Backend is not up!")
     
+    # perform homing sequence for both dispensers before game starts
+    #homing_sequence(1)
+    #homing_sequence(2)
+    time.sleep(2)
+    
+    # move pot to low position to start game.
+    #move_pot(high=False)
+    
     print("Waiting for arduino information")
     game_state = get_serial_gamestate_info(skip=True)
-        
+
     PhysicalGame(
         n_players=game_state.num_players, 
         button_pos=game_state.button_pos, 
@@ -388,3 +423,4 @@ if __name__ == "__main__":
         small_blind=game_state.small_blind, 
         big_blind=game_state.big_blind
     ).play_against_models_physical()
+
