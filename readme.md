@@ -31,9 +31,9 @@ Step 1:
 python -m src.training.train \
  --iterations 20000 \
  --traversals 200 \
- --save-dir models/standard/4_player/phase1_20k \
- --log-dir logs/standard/4_player/phase1_20k\
- --num-opponents 3 
+ --save-dir models/standard/5_player/phase1_20k \
+ --log-dir logs/standard/5_player/phase1_20k\
+ --num-opponents 4 
 
 Step 2:
 python -m src.training.train \
@@ -42,7 +42,7 @@ python -m src.training.train \
  --iterations 10000 \
  --traversals 400 \
  --save-dir models/standard/4_player/selfplay_from_20000 \
- --log-dir logs/standard/4_player/selfplay_from_3000 \
+ --log-dir logs/standard/4_player/selfplay_from_20000 \
  --num-opponents 3
 
 Step 3:
@@ -50,7 +50,7 @@ python -m src.training.train \
  --checkpoint models/standard/4_player/selfplay_from_20000/selfplay_checkpoint_iter_30000.pt \
  --mixed \
  --checkpoint-dir models/standard/4_player \
- --model-prefix "\*checkpoint_iter*" \
+ --model-prefix "selfplay_checkpoint_iter" \
  --refresh-interval 1000 \
  --num-opponents 3 \
  --iterations 10000 \

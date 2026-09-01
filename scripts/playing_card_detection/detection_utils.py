@@ -27,7 +27,7 @@ def preprocess_image(image):
     model has an easier time detecting cards.
     """
     # brighten the image
-    image = cv2.convertScaleAbs(image, alpha=2.3, beta=30)
+    image = cv2.convertScaleAbs(image, alpha=1.3, beta=30)
 
     # boost local contrast (helps corner rank/suit stand out)
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)

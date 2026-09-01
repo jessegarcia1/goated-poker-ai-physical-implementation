@@ -416,7 +416,7 @@ def train_deep_cfr(num_iterations=1000, traversals_per_iteration=200,
     
     return agent, losses, profits
 
-def continue_training(checkpoint_path, additional_iterations=1000, 
+def continue_training(num_players, checkpoint_path, additional_iterations=1000, 
                      traversals_per_iteration=200, save_dir="models", 
                      log_dir="logs/deepcfr_continued", verbose=False, debug_training=False,
                      checkpoint_interval=1000, evaluation_interval=10,
@@ -453,7 +453,7 @@ def continue_training(checkpoint_path, additional_iterations=1000,
     )
     
     # Initialize the agent
-    num_players = 6  # Assuming 6 players as in the original training
+    # num_players can now be varied (not always 6 players)
     player_id = 0    # Assuming player_id 0 as in the original training
     agent = DeepCFRAgent(player_id=player_id, num_players=num_players, 
                           device='cuda' if torch.cuda.is_available() else 'cpu')
@@ -596,7 +596,7 @@ def continue_training(checkpoint_path, additional_iterations=1000,
     
     return agent, losses, profits
 
-def train_against_checkpoint(checkpoint_path, additional_iterations=1000, 
+def train_against_checkpoint(num_players, checkpoint_path, additional_iterations=1000, 
                            traversals_per_iteration=200, save_dir="models", 
                            log_dir="logs/deepcfr_selfplay", verbose=False, debug_training=False,
                            progress_interval=100, checkpoint_interval=1000,
@@ -633,14 +633,14 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
     
     # Create opponent agents for all positions
     opponent_agents = []
-    for pos in range(6):
+    for pos in range(num_players):
         # Create a new agent for each position
-        pos_agent = DeepCFRAgent(player_id=pos, num_players=6, device=device)
+        pos_agent = DeepCFRAgent(player_id=pos, num_players=num_players, device=device)
         pos_agent.load_model(checkpoint_path)
         opponent_agents.append(pos_agent)
     
     # Continue the learning agent from the same checkpoint used for the fixed opponents.
-    learning_agent = DeepCFRAgent(player_id=0, num_players=6, device=device)
+    learning_agent = DeepCFRAgent(player_id=0, num_players=num_players, device=device)
     learning_agent.load_model(checkpoint_path)
     learning_agent.debug_training = debug_training
     starting_iteration = learning_agent.iteration_count + 1
@@ -667,7 +667,7 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
     initial_profit_random = evaluate_against_random(
         learning_agent,
         num_games=random_eval_games,
-        num_players=6,
+        num_players=num_players,
         writer=writer,
         iteration=starting_iteration - 1,
         metric_prefix="Evaluation/Random",
@@ -676,8 +676,8 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
     print(f"Initial average profit vs random: {initial_profit_random:.2f}")
     writer.add_scalar('Performance/ProfitVsRandom', initial_profit_random, starting_iteration - 1)
     
-    opponent_wrappers = [None] * 6
-    for pos in range(6):
+    opponent_wrappers = [None] * num_players
+    for pos in range(num_players):
         if pos != learning_agent.player_id:
             opponent_wrappers[pos] = _PerspectiveAgentWrapper(opponent_agents[pos])
 
@@ -701,10 +701,10 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
 
         # Run traversals to collect data
         for t in range(traversals_per_iteration):
-            button_pos = t % 6
+            button_pos = t % num_players
 
             state = pkrs.State.from_seed(
-                n_players=6,
+                n_players=num_players,
                 button=button_pos,
                 sb=1,
                 bb=2,
@@ -748,7 +748,7 @@ def train_against_checkpoint(checkpoint_path, additional_iterations=1000,
             last_profit_random = evaluate_against_random(
                 learning_agent,
                 num_games=random_eval_games,
-                num_players=6,
+                num_players=num_players,
                 writer=writer,
                 iteration=iteration,
                 metric_prefix="Evaluation/Random",
@@ -823,8 +823,11 @@ def evaluate_against_checkpoint_agents(
     Evaluate the trained agent against opponent agents.
     Each agent will receive and process observations from its own perspective.
     """
-    opponent_wrappers = [None] * 6
-    for pos in range(6):
+    num_players = len(opponent_agents)
+    print("NUM_PLAYERS WHEN EVALUATED", num_players)
+    
+    opponent_wrappers = [None] * num_players
+    for pos in range(num_players):
         if pos != agent.player_id:
             opponent_wrappers[pos] = _PerspectiveAgentWrapper(opponent_agents[pos])
 
@@ -833,6 +836,7 @@ def evaluate_against_checkpoint_agents(
         opponent_wrappers,
         num_games=num_games,
         seed_start=10000,
+        num_players=num_players,
         strict=True,
         label="evaluation vs checkpoint",
         print_warnings=True,
@@ -862,7 +866,7 @@ def evaluate_against_agent(agent, opponent_agent, num_games=100):
     
     return evaluate_against_checkpoint_agents(agent, opponent_agents, num_games)
 
-def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpoint_iter_",
+def train_with_mixed_checkpoints(num_players, checkpoint_dir, training_model_prefix="*checkpoint_iter_",
                            additional_iterations=1000, traversals_per_iteration=200,
                            save_dir="models", log_dir="logs/deepcfr_mixed",
                            refresh_interval=1000, num_opponents=5, verbose=False,
@@ -911,7 +915,7 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # Initialize the learning agent
-    learning_agent = DeepCFRAgent(player_id=0, num_players=6, device=device)
+    learning_agent = DeepCFRAgent(player_id=0, num_players=num_players, device=device)
     learning_agent.debug_training = debug_training
     starting_iteration = 1
     
@@ -944,14 +948,14 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
             num_opponents=num_opponents,
             device=device,
             player_id=learning_agent.player_id,
-            num_players=6,
+            num_players=num_players,
             allow_random_fallback=allow_random_fallback,
         )
         return opponent_agents
 
     def wrap_opponents(opponent_agents):
-        opponent_wrappers = [None] * 6
-        for pos in range(6):
+        opponent_wrappers = [None] * num_players
+        for pos in range(num_players):
             if pos != learning_agent.player_id and opponent_agents[pos] is not None:
                 opponent_wrappers[pos] = _PerspectiveAgentWrapper(opponent_agents[pos])
         return opponent_wrappers
@@ -975,7 +979,7 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
     initial_profit_random = evaluate_against_random(
         learning_agent,
         num_games=random_eval_games,
-        num_players=6,
+        num_players=num_players,
         writer=writer,
         iteration=starting_iteration - 1,
         metric_prefix="Evaluation/Random",
@@ -1010,9 +1014,9 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
             opponent_wrappers = wrap_opponents(opponent_agents)
 
         for t in range(traversals_per_iteration):
-            button_pos = t % 6
+            button_pos = t % num_players
             state = pkrs.State.from_seed(
-                n_players=6,
+                n_players=num_players,
                 button=button_pos,
                 sb=1,
                 bb=2,
@@ -1055,7 +1059,7 @@ def train_with_mixed_checkpoints(checkpoint_dir, training_model_prefix="*checkpo
             last_profit_random = evaluate_against_random(
                 learning_agent,
                 num_games=random_eval_games,
-                num_players=6,
+                num_players=num_players,
                 writer=writer,
                 iteration=iteration,
                 metric_prefix="Evaluation/Random",
@@ -1176,6 +1180,7 @@ def main(argv=None):
     if args.mixed:
         print(f"Starting mixed checkpoint training with models from: {args.checkpoint_dir}")
         agent, losses, profits, profits_vs_checkpoints = train_with_mixed_checkpoints(
+            num_players=args.num_opponents + 1, # Added so you can continue training with models trained on less than 6 players
             checkpoint_dir=args.checkpoint_dir,
             training_model_prefix=args.model_prefix,
             additional_iterations=args.iterations,
@@ -1199,6 +1204,7 @@ def main(argv=None):
     elif args.checkpoint and args.self_play:
         print(f"Starting self-play training against checkpoint: {args.checkpoint}")
         agent, losses, profits = train_against_checkpoint(
+            num_players=args.num_opponents + 1, # Added so you can continue training with models trained on less than 6 players
             checkpoint_path=args.checkpoint,
             additional_iterations=args.iterations,
             traversals_per_iteration=args.traversals,
@@ -1215,6 +1221,7 @@ def main(argv=None):
     elif args.checkpoint:
         print(f"Continuing training from checkpoint: {args.checkpoint}")
         agent, losses, profits = continue_training(
+            num_players=args.num_opponents + 1,
             checkpoint_path=args.checkpoint,
             additional_iterations=args.iterations,
             traversals_per_iteration=args.traversals,
@@ -1236,7 +1243,7 @@ def main(argv=None):
         agent, losses, profits = train_deep_cfr(
             num_iterations=args.iterations,
             traversals_per_iteration=args.traversals,
-            num_players=6,
+            num_players=args.num_opponents + 1,
             player_id=0,
             save_dir=args.save_dir,
             log_dir=args.log_dir,
