@@ -142,27 +142,31 @@ def get_human_action_physical_game(state, player_id:int=0):
         elif action_input == 'check':
             if pkrs.ActionEnum.Check in state.legal_actions:
                 # tare after a call
-                get_serial_pot_amount(tare=True) 
+                get_serial_pot_amount(tare=True, verbose=False) 
                 
                 return pkrs.Action(pkrs.ActionEnum.Check)
             elif pkrs.ActionEnum.Call in state.legal_actions:
                 # tare after a call
-                get_serial_pot_amount(tare=True) 
+                get_serial_pot_amount(tare=True, verbose=False) 
                 
                 return pkrs.Action(pkrs.ActionEnum.Call)
         
         # Process raise. Player will always add their chips to the pot, then press the button
         elif action_input == 'raise' and pkrs.ActionEnum.Raise in state.legal_actions:
+            # Note: min_bet is the call amount or the min bet size if call amount is lower.
+            # BUG I think.. amount always gets passed in to build_raise_action. Amount is not
+            # the additional amount, but the whole bet size. This means that when a human raises
+            # it will at least be double the original bet. I will fix this in this version of the function.
             bounds = raise_bounds(state)
-            chips_raised = get_serial_pot_amount()
-            amount = chips_raised * .25
+            amount = get_serial_pot_amount()
+            additional_amount = amount - bounds.min_raise 
             if bounds.min_raise <= amount <= bounds.max_raise:
                 return build_raise_action(state, amount)
             else:
                 print(f"Amount must be between {bounds.min_raise:.2f} and {bounds.max_raise:.2f}")
         
         print("Invalid action. Please Enter your action again.")
-        
+        print("Confirm you have removed you chips from the pot...")
+        wait_for_player_action()
         # tare after invalid action
         get_serial_pot_amount(tare=True)
-        

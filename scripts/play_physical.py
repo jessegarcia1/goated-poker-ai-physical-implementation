@@ -7,6 +7,7 @@ import time
 
 from pokers import Card, Action, State, ActionEnum
 from scripts.play_helpers import card_to_string, get_action_description, display_game_state, get_human_action_physical_game
+from scripts.raspi_gpio_scripts.get_player_action import wait_for_player_action
 from scripts.raspi_gpio_scripts.dispense_chips import dispense, homing_sequence, move_pot
 from src.utils import apply_action_with_logging
 from src.utils.raspi import capture_photo, get_serial_gamestate_info, create_state_json_payload, get_serial_pot_amount
@@ -43,7 +44,6 @@ class PhysicalGame:
         self.seed = None
         self.AGENT_HANDS_CAMERA_NUM = 0
         self.COMMUNITY_CARDS_CAMERA_NUM = 2
-        self.previous_pot_amount = 0
 
         # Humans occupy first N seats by default
         self.human_positions = list(range(self.num_human_players))
@@ -146,6 +146,7 @@ class PhysicalGame:
             
             while True:
                 raw_cards = input(f"Cards (space-separated): ").upper().strip().split()
+ 
                 if len(raw_cards) != count:
                     print(f"Please enter exactly {count} card(s).")
                     continue
@@ -191,8 +192,15 @@ class PhysicalGame:
 
     def get_nearest_quarter_amount(self, action: Action):
         """
-        Rounds the amount of the action to the nearest .25 cents. Always rounds down
+        Rounds the amount of the action to the nearest .25 cents. Always rounds down.
+        If Call action:
+            Sets Call action to have its value be the min_raise amount (prev action amount).
         """
+        if action.action == pkrs.ActionEnum.Call:
+            bounds = raise_bounds(self.state)
+            action.amount = bounds.min_raise
+            return action
+        
         amount = action.amount
         decimal = amount - int(amount)
         divide = decimal / .25
@@ -208,6 +216,36 @@ class PhysicalGame:
         action.amount = nearest_quarter_amount
         print(f"Rounded {amount} to {nearest_quarter_amount}.")
         return action
+
+    def handle_blind_stage(self):
+        if self.n_players == 2:
+            # Heads-up: button acts as small blind
+            sb_pos = self.button_pos
+            bb_pos = (self.button_pos + 1) % self.n_players
+        else:
+            sb_pos = (self.button_pos + 1) % self.n_players
+            bb_pos = (self.button_pos + 2) % self.n_players
+
+        # If an agent is posting a blind, dispense chips for it
+        for idx, agent_pos in enumerate(self.agent_positions):
+            agent_num = idx + 1
+            if agent_pos == sb_pos:
+                print(f"Agent {agent_num} (pos {agent_pos}) is small blind - dispensing")
+                dispense(num_dispensed=1, agent_num=agent_num)
+                time.sleep(2)
+            if agent_pos == bb_pos:
+                print(f"Agent {agent_num} (pos {agent_pos}) is big blind - dispensing")
+                dispense(num_dispensed=2, agent_num=agent_num)
+                time.sleep(2)
+        for human_pos in enumerate(self.human_positions):
+            if human_pos == sb_pos:
+                print(f"Waiting for player {human_pos} to enter small blind amount. Press button when done.")
+                wait_for_player_action()
+            if human_pos == bb_pos:
+                print(f"Waiting for player {human_pos} to enter big blind amount. Press button when done.")
+                wait_for_player_action()
+        # Tare after blind amounts are dispensed
+        get_serial_pot_amount(tare=True, verbose=False)
         
     def set_agent_hand(self, agent_position: int, state:pkrs.State, temp_agent_num:int):
         """
@@ -216,7 +254,10 @@ class PhysicalGame:
         Returns the state with the new agents's hand in place.
         """
         # grab cards from player input for now
-        ai_hand = self.set_cards(count=4, camera_num=self.AGENT_HANDS_CAMERA_NUM, prompt=f"Scanning cards for agent position: {agent_position}")
+        
+        # Temporarliy hard coding ai cards. Used for testing
+        #ai_hand = self.set_cards(count=4, camera_num=self.AGENT_HANDS_CAMERA_NUM, prompt=f"Scanning cards for agent position: {agent_position}")
+        ai_hand = [Card.from_string("H2"), Card.from_string("S7"), Card.from_string("H2"), Card.from_string("S7")]
         # Assign state of this agent to have inputed cards as hand
         players_copy = state.players_state # players is a copy, must reasign
         ai_state = players_copy[agent_position]
@@ -285,6 +326,8 @@ class PhysicalGame:
             for position, player in enumerate(state.players_state):
                 readable = [f"{card_to_string(card)}" for card in player.hand]
                 print(f"Player {position}: {' '.join(readable)}")
+            
+            self.handle_blind_stage()
 
             community_cards = []
             current_stage = 0  # 0=PreFlop, 1=Flop, 2=Turn, 3=River, 4=Showdown
@@ -309,18 +352,10 @@ class PhysicalGame:
                 action_with_rounded_amount = None
                 # Display game state before human acts
                 if current_player_pos in self.human_positions:
-                    temp_pot_amount = self.previous_pot_amount
-                    self.previous_pot_amount = get_serial_pot_amount() + temp_pot_amount
-                    print("self.previous_pot_amount: ", self.previous_pot_amount)
                     display_game_state(state, current_player_pos, human_positions=self.human_positions)
                     
                     action = get_human_action_physical_game(state, current_player_pos)
                     print(f"You chose: {get_action_description(action)}")
-                    
-                    # add action amount to previous_pot_weight
-                    temp_pot_amount = self.previous_pot_amount
-                    self.preprevious_pot_amount = temp_pot_amount + action.amount
-                    print("self.previous_pot_amount again: ", self.previous_pot_amount)
                     
                     action_with_rounded_amount = self.get_nearest_quarter_amount(action)
 
@@ -342,14 +377,17 @@ class PhysicalGame:
                     time.sleep(5)
 
                     action_with_rounded_amount = self.get_nearest_quarter_amount(action)
-                    
+                        
                     # only dispense for agents
                     agent_num = 1
                     if current_player_pos == 3:
                         agent_num = 2
-                    num_chips_to_dispense = action_with_rounded_amount.amount / .25
+                    num_chips_to_dispense = int(action_with_rounded_amount.amount / .25)
                     dispense(num_dispensed=num_chips_to_dispense, agent_num=agent_num)
-                
+                    
+                    # Tare after ai makes a move
+                    time.sleep(2)
+                    get_serial_pot_amount(tare=True, verbose=False)
 
                 # Apply the action
                 new_state, log_file, status = apply_action_with_logging(
@@ -405,16 +443,25 @@ if __name__ == "__main__":
         raise Exception("Backend is not up!")
     
     # perform homing sequence for both dispensers before game starts
-    #homing_sequence(1)
-    #homing_sequence(2)
-    time.sleep(2)
+    # homing_sequence(1)
+    # homing_sequence(2)
+    
+    print("Waiting for player action to start game...")
+    wait_for_player_action()
     
     # move pot to low position to start game.
     #move_pot(high=False)
     
+    print("Taring pot...")
+    # double tare tech
+    get_serial_pot_amount(tare=True)
+    time.sleep(2)
+    get_serial_pot_amount(tare=True)
+    print("Taring done.")
+    
     print("Waiting for arduino information")
     game_state = get_serial_gamestate_info(skip=True)
-
+    
     PhysicalGame(
         n_players=game_state.num_players, 
         button_pos=game_state.button_pos, 
@@ -424,3 +471,4 @@ if __name__ == "__main__":
         big_blind=game_state.big_blind
     ).play_against_models_physical()
 
+# H2 S7 H2 S7

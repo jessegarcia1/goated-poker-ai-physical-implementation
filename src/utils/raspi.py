@@ -79,7 +79,7 @@ def get_serial_gamestate_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
             big_blind=big_blind,
         )
 
-def get_serial_pot_amount(port='/dev/ttyACM0', baudrate=9600, tare=False):
+def get_serial_pot_amount(port='/dev/ttyACM0', baudrate=9600, tare=False, verbose=True):
     """
     Communicates with the Arduino over serial to tare the scale
     and retrieve the average pot weight. 
@@ -91,11 +91,12 @@ def get_serial_pot_amount(port='/dev/ttyACM0', baudrate=9600, tare=False):
     Raises:
         RuntimeError: If the tare or weight reading times out.
     """
-    print("Waiting for scale to get five weights..." )
+    if verbose: 
+        print("Waiting for scale to get five weights..." )
     if not tare:
         for i in range(5):
             print(i + 1)
-            time.sleep(.5)
+            time.sleep(1)
    
     TIMEOUT = 20 # in seconds
 
@@ -104,7 +105,9 @@ def get_serial_pot_amount(port='/dev/ttyACM0', baudrate=9600, tare=False):
     # Clear any startup messages already waiting in the serial buffer
     ser.reset_input_buffer()
 
-    print("Sending GET_WEIGHT command...")
+    if verbose:
+        print("Sending GET_WEIGHT command...")
+    
     ser.write(b"GET_WEIGHT\n")
     ser.flush()
 
@@ -116,17 +119,17 @@ def get_serial_pot_amount(port='/dev/ttyACM0', baudrate=9600, tare=False):
         if not line:
             continue
 
-        print(f"Arduino: {line}")
-
         if line.startswith("AVERAGE_WEIGHT:"):
             try:
                 weight_string = line.split(":", 1)[1].strip()
                 weight = float(weight_string)
 
-                print(f"Average pot weight: {weight:.2f} g")
+                if verbose:
+                    print(f"Average pot weight: {weight:.2f} g")
                 rounded_num_chips = round(weight / 10.5) # 10.5 is the weight of 1 chip
                 pot_value = rounded_num_chips * .25
-                print(f"Current pot value: {pot_value}")
+                if verbose:
+                    print(f"Current pot value: ${pot_value}")
                 return pot_value
 
             except (IndexError, ValueError) as error:
