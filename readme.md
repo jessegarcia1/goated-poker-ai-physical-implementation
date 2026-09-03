@@ -37,13 +37,13 @@ python -m src.training.train \
 
 Step 2:
 python -m src.training.train \
- --checkpoint models/standard/4_player/phase1_20k/checkpoint_iter_20000.pt \
+ --checkpoint models/standard/5_player/phase1_20k/checkpoint_iter_20000.pt \
  --self-play \
  --iterations 10000 \
  --traversals 400 \
- --save-dir models/standard/4_player/selfplay_from_20000 \
- --log-dir logs/standard/4_player/selfplay_from_20000 \
- --num-opponents 3
+ --save-dir models/standard/5_player/selfplay_from_20000 \
+ --log-dir logs/standard/5_player/selfplay_from_20000 \
+ --num-opponents 4
 
 Step 3:
 python -m src.training.train \

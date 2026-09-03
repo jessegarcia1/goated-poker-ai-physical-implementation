@@ -17,3 +17,4 @@ ultralytics
 opencv-python
 fastapi
 uvicorn
+pyttsx3

@@ -240,6 +240,7 @@ def _select_mixed_checkpoint_opponents(
             model_path=checkpoint_file,
             device=device,
             sanitize_actions=True,
+            num_players=num_players
         )
 
     for pos in opponent_seats:

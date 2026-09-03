@@ -21,6 +21,7 @@ class CheckpointAgent:
         device="cpu",
         sanitize_actions=True,
         with_opponent_modeling=None,
+        num_players=6
     ):
         self.player_id = player_id
         self.model_path = str(model_path)
@@ -29,6 +30,7 @@ class CheckpointAgent:
         self.name = f"Model Agent {player_id} ({os.path.basename(self.model_path)})"
         self.sanitized_action_count = 0
         self.sanitization_events = []
+        self.num_players = num_players
 
         checkpoint = load_checkpoint(self.model_path, map_location=device)
         self.with_opponent_modeling = checkpoint_uses_opponent_modeling_state(checkpoint)
@@ -37,6 +39,7 @@ class CheckpointAgent:
             player_id=player_id,
             device=device,
             checkpoint=checkpoint,
+            num_players=self.num_players
         )
 
     def choose_action(self, state, *, strict=False, fallback_recorder=None):
@@ -74,7 +77,7 @@ def checkpoint_uses_opponent_modeling(model_path):
     return checkpoint_uses_opponent_modeling_state(checkpoint)
 
 
-def create_agent_for_checkpoint(model_path, player_id, device="cpu", checkpoint=None):
+def create_agent_for_checkpoint(model_path, player_id, device="cpu", checkpoint=None, num_players=6):
     """Create and load the correct agent implementation for a checkpoint."""
     if checkpoint is None:
         checkpoint = load_checkpoint(model_path, map_location=device)
@@ -84,11 +87,11 @@ def create_agent_for_checkpoint(model_path, player_id, device="cpu", checkpoint=
             DeepCFRAgentWithOpponentModeling,
         )
 
-        agent = DeepCFRAgentWithOpponentModeling(player_id=player_id, num_players=6, device=device)
+        agent = DeepCFRAgentWithOpponentModeling(player_id=player_id, num_players=num_players, device=device)
     else:
         from src.core.deep_cfr import DeepCFRAgent
 
-        agent = DeepCFRAgent(player_id=player_id, num_players=6, device=device)
+        agent = DeepCFRAgent(player_id=player_id, num_players=num_players, device=device)
 
     agent.load_model(model_path)
     return agent

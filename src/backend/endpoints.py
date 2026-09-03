@@ -3,6 +3,8 @@ from pydantic import BaseModel
 import uvicorn
 from typing import Optional
 import numpy as np
+import pyttsx3
+import time
 
 from scripts.playing_card_detection.detection_utils import detect_cards
 from src.backend.agents import Agents
@@ -25,6 +27,9 @@ class AgentsInfo(BaseModel):
 class GameState(BaseModel):
     agent_pos: int
     game_state: GameStatePayload
+    
+class Text(BaseModel):
+    text: str
 
 @app.get("/is-backend-up", status_code=200)
 def is_backend_up():
@@ -76,7 +81,15 @@ def choose_action(data: GameState):
     print("Action: ", action)
     
     return {"action": int(action.action), "amount": action.amount}
-    
+
+@app.get("/play-text-to-speech", status_code=200)
+def play_text_to_speech(data: Text):
+    engine = pyttsx3.init()
+    engine.setProperty('volume', .7)        # setting up volume level  between 0 and 1
+    engine.setProperty('rate', 75)     # setting up new voice rate
+    engine.say(data.text)
+    engine.runAndWait()
+    print("done spekaing")
 
 # used to expose backend to other local guys
 if __name__ == "__main__":

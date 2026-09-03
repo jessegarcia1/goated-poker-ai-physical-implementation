@@ -63,7 +63,7 @@ def display_game_state(state, player_id=0, human_positions=None):
     # Show all players' states
     print("\nPlayers:")
     for i, p in enumerate(state.players_state):
-        status = "HUMAN" if i in human_positions else "AI"
+        status = "AI"
         if (i == player_id):
             status = "YOU"
         active = "Active" if p.active else "Folded"

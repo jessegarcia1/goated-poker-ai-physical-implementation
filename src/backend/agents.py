@@ -34,13 +34,13 @@ class Agents:
         
         player_num_path = str(self.n_players) + "_player"
         
-        # base_path = f"models/standard/{player_num_path}/checkpoint_mixed"
+        # base_path = f"models/standard/{player_num_path}/mixed"
         # potential_model_paths = [
-        #     base_path + '/*checkpoint_iter_mixed_iter_33600.pt',
-        #     base_path + '/*checkpoint_iter_mixed_iter_33700.pt',
-        #     base_path + '/*checkpoint_iter_mixed_iter_33800.pt',
-        #     base_path + '/*checkpoint_iter_mixed_iter_33900.pt',
-        #     base_path + '/*checkpoint_iter_mixed_iter_400000.pt',
+        #     base_path + '/mixed_checkpoint_iter_36000.pt',
+        #     base_path + '/mixed_checkpoint_iter_37000.pt',
+        #     base_path + '/mixed_checkpoint_iter_38000.pt',
+        #     base_path + '/mixed_checkpoint_iter_39000.pt',
+        #     base_path + '/mixed_checkpoint_iter_40000.pt',
         # ]
         
         base_path = f"models/standard/{player_num_path}/selfplay_from_20000"
