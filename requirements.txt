@@ -10,3 +10,4 @@ setuptools
 picamera2
 gpiozero
 lgpio
+pyttsx3

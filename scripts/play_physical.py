@@ -13,6 +13,7 @@ from src.utils import apply_action_with_logging
 from src.utils.raspi import capture_photo, get_serial_gamestate_info, create_state_json_payload, get_serial_pot_amount
 from src.routes.routes import urls, routes
 from src.utils.actions import raise_bounds
+from src.routes.hooks import card_detection_hook, load_models_hook, choose_action_hook, text_to_speech_hook, is_backend_up_hook
 
 """
     To run: python3 -m scripts.play_physical 
@@ -68,36 +69,6 @@ class PhysicalGame:
         actions = {0: ActionEnum.Fold, 1: ActionEnum.Check, 2: ActionEnum.Call, 3: ActionEnum.Raise}
         action = actions[action_int]
         return action
-        
-    def handle_post_request(self, payload: dict, route_key: str, timeout: float = 10.0):
-        """
-            Handles sending out a post request.
-            
-            Args:
-                payload: Payload to send in the post requests
-                route_key: The route to hit in the backend
-                timeout: Timeout in seconds
-            Returns:
-                The parsed JSON response body.
-        """
-        headers = {"content-type": "application/json"}
-        url = urls["mac-tailscale-ip"] + routes[route_key]
-
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as err:
-            print(f"Request to {url} failed: {err}")
-            raise
-
-        if response.status_code == 204:
-            raise Exception("Post request receives status of 204, response = { }")
-
-        try:
-            return response.json()
-        except ValueError as err:
-            print(f"Failed to parse JSON response from {url}: {err}")
-            raise
 
     def create_state(self):
         """
@@ -172,10 +143,8 @@ class PhysicalGame:
                 try:
                     image = capture_photo(camera_num, "test123.jpg")
 
-                    payload = {"image_as_list": image, "count": count}
-                    
                     print('Sending photo...\n')
-                    data = self.handle_post_request(payload, "card-detection", timeout=20)
+                    data = card_detection_hook(image, count)
 
                     status = data["status"]
                     print("detection status: ", status)
@@ -231,18 +200,24 @@ class PhysicalGame:
             agent_num = idx + 1
             if agent_pos == sb_pos:
                 print(f"Agent {agent_num} (pos {agent_pos}) is small blind - dispensing")
+                text_to_speech_hook(f"Agent {agent_num} (pos {agent_pos}) is small blind")
+                
                 dispense(num_dispensed=1, agent_num=agent_num)
                 time.sleep(2)
             if agent_pos == bb_pos:
                 print(f"Agent {agent_num} (pos {agent_pos}) is big blind - dispensing")
+                text_to_speech_hook(f"Agent {agent_num} (pos {agent_pos}) is big blind")
+                
                 dispense(num_dispensed=2, agent_num=agent_num)
                 time.sleep(2)
         for human_pos in enumerate(self.human_positions):
             if human_pos == sb_pos:
                 print(f"Waiting for player {human_pos} to enter small blind amount. Press button when done.")
+                text_to_speech_hook(f"Waiting for player {human_pos} to enter small blind amount. Press button when done.", skip=True)
                 wait_for_player_action()
             if human_pos == bb_pos:
                 print(f"Waiting for player {human_pos} to enter big blind amount. Press button when done.")
+                text_to_speech_hook(f"Waiting for player {human_pos} to enter big blind amount. Press button when done.", skip=True)
                 wait_for_player_action()
         # Tare after blind amounts are dispensed
         get_serial_pot_amount(tare=True, verbose=False)
@@ -283,9 +258,7 @@ class PhysicalGame:
             - Set each AI's initial stake
             - Set number of players and how many AI models there will be.
         """
-        payload = {"n_players": self.n_players, "n_agents": self.num_agents}
-
-        data = self.handle_post_request(payload, "load-models")
+        data = load_models_hook(self.n_players, self.num_agents)
         status = data["status"]
         print("load-models status: ", status)
         if status == "failed":
@@ -296,19 +269,23 @@ class PhysicalGame:
         player_stake = self.initial_stake
 
         while True:
-            if player_stake <= 0:
-                print("\nYou're out of chips! Game over.")
-                break
+            # if player_stake <= 0:
+            #     print("\nYou're out of chips! Game over.")
+            #     break
 
             if num_games > 0:
-                choice = input("\nContinue playing? (y/n): ").strip().lower()
-                if choice != 'y':
-                    print("Thanks for playing!")
-                    break
+                #choice = input("\nContinue playing? (y/n): ").strip().lower()
+                # if choice != 'y':
+                #     print("Thanks for playing!")
+                #     break
+                print("\nContinue Playing? Press any button to play again.")
+                text_to_speech_hook("\nContinue Playing? Press any button to play again.", skip=True)
+                wait_for_player_action()
             
             num_games += 1
             print(f"\n--- Game {num_games} ---")
             print(f"Your current balance: ${player_stake:.2f}")
+            text_to_speech_hook(f"Game number {num_games}")
             
             # Updates agent bankrolls, humans stay at initial_stake.
             state = self.create_state()
@@ -317,6 +294,8 @@ class PhysicalGame:
             # model working is that it snaps a photo of all 4 cards at once. I am using a 
             # roundabout way to make sure the first agent gets the first 2 cards and the
             # second agent gets the third and fourth cards.
+            print("Assigning agent hands..")
+            text_to_speech_hook("Assigning agent hands")
             temp_agent_num = 1
             for agent_pos in self.agent_positions:
                 state = self.set_agent_hand(agent_pos, state, temp_agent_num)
@@ -353,40 +332,47 @@ class PhysicalGame:
                 # Display game state before human acts
                 if current_player_pos in self.human_positions:
                     display_game_state(state, current_player_pos, human_positions=self.human_positions)
+                    text_to_speech_hook(f"Player {current_player_pos}'s turn")
+                    
                     
                     action = get_human_action_physical_game(state, current_player_pos)
-                    print(f"You chose: {get_action_description(action)}")
-                    
                     action_with_rounded_amount = self.get_nearest_quarter_amount(action)
+                    print(f"Player {current_player_pos} chose: {get_action_description(action_with_rounded_amount)}")
+                    text_to_speech_hook(f"Player {current_player_pos} chose: {get_action_description(action_with_rounded_amount)}")
+                    
 
                 else:
+                    display_game_state(state, current_player_pos, human_positions=self.human_positions)
+
                     # Abbreviated state display for AI turns
-                    print(f"\nPlayer {current_player_pos}'s turn")
-                    time.sleep(3)
+                    print(f"Player {current_player_pos}'s turn")
+                    text_to_speech_hook(f"Player {current_player_pos}'s turn")
+                    
                     
                     # self.agents is originally assigned agents based on pos
                     state_payload = create_state_json_payload(self.state, self.n_players, self.seed)
-                    choose_action_payload = {"game_state": state_payload, "agent_pos": current_player_pos}
-                    data = self.handle_post_request(choose_action_payload, "choose-action")
+                    data = choose_action_hook(state_payload, current_player_pos)
                     
                     action_int = data["action"]
                     action_amount = data["amount"]
                     action = Action(self.action_enum_from_int(action_int), action_amount)
-                                    
-                    print(f"Player {current_player_pos} chose: {get_action_description(action)}")
-                    time.sleep(5)
-
                     action_with_rounded_amount = self.get_nearest_quarter_amount(action)
                         
+                    print(f"Player {current_player_pos} chose: {get_action_description(action)}")
+                    text_to_speech_hook(f"Player {current_player_pos} chose: {get_action_description(action)}")
+
                     # only dispense for agents
                     agent_num = 1
                     if current_player_pos == 3:
                         agent_num = 2
                     num_chips_to_dispense = int(action_with_rounded_amount.amount / .25)
+                    
+                    if action_with_rounded_amount.action != pkrs.ActionEnum.Check and action_with_rounded_amount != pkrs.ActionEnum.Fold:
+                        text_to_speech_hook(f"Dispensing {num_chips_to_dispense} chips", skip=True)
+                        
                     dispense(num_dispensed=num_chips_to_dispense, agent_num=agent_num)
                     
                     # Tare after ai makes a move
-                    time.sleep(2)
                     get_serial_pot_amount(tare=True, verbose=False)
 
                 # Apply the action
@@ -436,17 +422,18 @@ class PhysicalGame:
         
 # $10 stake, 25 cent chips
 if __name__ == "__main__":
-    print("Sending get request...")
-    r = requests.get(urls["mac-tailscale-ip"] + routes["is-backend-up"])
-
-    if (r.status_code != 200):
-        raise Exception("Backend is not up!")
+    print("Making sure backend is running...")
+    is_backend_up_hook()
+    
+    print("Performing homing sequences...")
+    text_to_speech_hook("Performing homing sequences")
     
     # perform homing sequence for both dispensers before game starts
     # homing_sequence(1)
     # homing_sequence(2)
     
     print("Waiting for player action to start game...")
+    text_to_speech_hook("Waiting for player action to start game", skip=True)
     wait_for_player_action()
     
     # move pot to low position to start game.

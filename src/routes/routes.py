@@ -15,5 +15,6 @@ routes = {
   "card-detection": "/card-detection",
   "is-backend-up": "/is-backend-up",
   "choose-action": "/choose-action",
-  "load-models": "/load-models"
+  "load-models": "/load-models",
+  "play-text-to-speech": "/play-text-to-speech"
 }

@@ -52,7 +52,7 @@ if __name__ == '__main__':
     try:
         # action = wait_for_button_press()
         # print(f"Action selected: {action}")
-        wait_for_player_action()
+        test_buttons()
         pass
 
     except KeyboardInterrupt:

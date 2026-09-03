@@ -210,4 +210,4 @@ def create_state_json_payload(state: State, n_players: int, seed: int) -> dict:
     return payload
 
 if __name__ == '__main__':
-    get_serial_pot_amount()
+    pass

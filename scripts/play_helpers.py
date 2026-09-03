@@ -5,6 +5,7 @@ import time
 from src.utils.actions import build_raise_action, preset_raise_action, raise_bounds
 from scripts.raspi_gpio_scripts.get_player_action import wait_for_player_action
 from src.utils.raspi import get_serial_pot_amount
+from src.routes.hooks import text_to_speech_hook
 
 def get_action_description(action):
     """Convert a pokers action to a human-readable string."""
@@ -161,12 +162,15 @@ def get_human_action_physical_game(state, player_id:int=0):
             amount = get_serial_pot_amount()
             additional_amount = amount - bounds.min_raise 
             if bounds.min_raise <= amount <= bounds.max_raise:
-                return build_raise_action(state, amount)
+                return build_raise_action(state, additional_amount)
             else:
                 print(f"Amount must be between {bounds.min_raise:.2f} and {bounds.max_raise:.2f}")
+                text_to_speech_hook(f"Amount must be between {bounds.min_raise:.2f} and {bounds.max_raise:.2f}", sleep=6)
         
         print("Invalid action. Please Enter your action again.")
+        text_to_speech_hook("Invalid action. Please Enter your action again.")
         print("Confirm you have removed you chips from the pot...")
+        text_to_speech_hook("Confirm you have removed you chips from the pot...", skip=True)
         wait_for_player_action()
         # tare after invalid action
         get_serial_pot_amount(tare=True)

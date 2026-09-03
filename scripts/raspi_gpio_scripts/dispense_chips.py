@@ -201,8 +201,8 @@ if __name__ == '__main__':
     try:
         # dispense(15, 1)
         #homing_sequence(agent_num=1)
-        # move_pot(high=True)
-        dispense(num_dispensed=3, agent_num=1)
+        # move_pot(high=False)
+        # dispense(num_dispensed=3, agent_num=1)
         pass
 
     except KeyboardInterrupt:
