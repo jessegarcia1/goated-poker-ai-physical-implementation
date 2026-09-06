@@ -255,7 +255,7 @@ def play_against_models(models_dir=None, model_pattern="*.pt", num_models=5,
             stake=initial_stake,
             seed=random.randint(0, 10000)
         )
-        
+                
         # Play until the game is over
         while not state.final_state:
             current_player = state.current_player

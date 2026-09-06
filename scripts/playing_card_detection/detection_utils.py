@@ -20,7 +20,6 @@ CLASS_NAMES = [
     "CQ", "DQ", "HQ", "SQ",
 ]
 
-
 def preprocess_image(image):
     """
     Brightens and sharpens a dark/low-contrast webcam image so the
@@ -28,7 +27,6 @@ def preprocess_image(image):
     """
     # brighten the image
     image = cv2.convertScaleAbs(image, alpha=1.3, beta=30)
-
     # boost local contrast (helps corner rank/suit stand out)
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
@@ -59,6 +57,10 @@ def detect_cards(image, count) -> list[str] | None:
         detected_cards_str.append(CLASS_NAMES[cls])
         
     print("LENGTH CARD LIST: ", len(detected_cards_str))
+    
+    # If duplicate cards were detected, remove the duplicates.
+    if len(detected_cards_str) > count and count == 2:
+        detected_cards_str = list(dict.fromkeys(detected_cards_str))
         
     if len(detected_cards_str) == count:
         return detected_cards_str

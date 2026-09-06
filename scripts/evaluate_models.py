@@ -244,7 +244,6 @@ def write_json_results(results: Sequence[dict], output_path: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(list(results), indent=2), encoding="utf-8")
 
-
 def write_csv_results(results: Sequence[dict], output_path: str) -> None:
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -261,6 +260,16 @@ def write_csv_results(results: Sequence[dict], output_path: str) -> None:
         "vs_random_setup_errors",
         "vs_random_requested_games",
         "vs_random_sanitized_actions",
+        "vs_random_agent_actions",
+        "vs_random_agent_fold_actions",
+        "vs_random_agent_check_call_actions",
+        "vs_random_agent_raise_actions",
+        "vs_random_agent_fold_rate",
+        "vs_random_agent_check_call_rate",
+        "vs_random_agent_raise_rate",
+        "vs_random_agent_preflop_actions",
+        "vs_random_agent_preflop_folds",
+        "vs_random_agent_preflop_fold_rate",
         "vs_checkpoint_pool_avg_profit",
         "vs_checkpoint_pool_completed_games",
         "vs_checkpoint_pool_invalid_state_games",
@@ -269,37 +278,56 @@ def write_csv_results(results: Sequence[dict], output_path: str) -> None:
         "vs_checkpoint_pool_setup_errors",
         "vs_checkpoint_pool_requested_games",
         "vs_checkpoint_pool_sanitized_actions",
+        "vs_checkpoint_pool_agent_actions",
+        "vs_checkpoint_pool_agent_fold_actions",
+        "vs_checkpoint_pool_agent_check_call_actions",
+        "vs_checkpoint_pool_agent_raise_actions",
+        "vs_checkpoint_pool_agent_fold_rate",
+        "vs_checkpoint_pool_agent_check_call_rate",
+        "vs_checkpoint_pool_agent_raise_rate",
+        "vs_checkpoint_pool_agent_preflop_actions",
+        "vs_checkpoint_pool_agent_preflop_folds",
+        "vs_checkpoint_pool_agent_preflop_fold_rate",
     ]
 
     with output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for result in results:
-            writer.writerow(
-                {
-                    "checkpoint": result["checkpoint"],
-                    "name": result["name"],
-                    "iteration": result["iteration"],
-                    "device": result["device"],
-                    "vs_random_avg_profit": result["vs_random"]["avg_profit"],
-                    "vs_random_completed_games": result["vs_random"]["completed_games"],
-                    "vs_random_invalid_state_games": result["vs_random"]["invalid_state_games"],
-                    "vs_random_invalid_state_count": result["vs_random"]["invalid_state_count"],
-                    "vs_random_non_zero_sum_games": result["vs_random"]["non_zero_sum_games"],
-                    "vs_random_setup_errors": result["vs_random"]["setup_errors"],
-                    "vs_random_requested_games": result["vs_random"]["requested_games"],
-                    "vs_random_sanitized_actions": result["vs_random"]["sanitized_actions"],
-                    "vs_checkpoint_pool_avg_profit": result["vs_checkpoint_pool"]["avg_profit"],
-                    "vs_checkpoint_pool_completed_games": result["vs_checkpoint_pool"]["completed_games"],
-                    "vs_checkpoint_pool_invalid_state_games": result["vs_checkpoint_pool"]["invalid_state_games"],
-                    "vs_checkpoint_pool_invalid_state_count": result["vs_checkpoint_pool"]["invalid_state_count"],
-                    "vs_checkpoint_pool_non_zero_sum_games": result["vs_checkpoint_pool"]["non_zero_sum_games"],
-                    "vs_checkpoint_pool_setup_errors": result["vs_checkpoint_pool"]["setup_errors"],
-                    "vs_checkpoint_pool_requested_games": result["vs_checkpoint_pool"]["requested_games"],
-                    "vs_checkpoint_pool_sanitized_actions": result["vs_checkpoint_pool"]["sanitized_actions"],
-                }
-            )
-
+            row = {
+                "checkpoint": result["checkpoint"],
+                "name": result["name"],
+                "iteration": result["iteration"],
+                "device": result["device"],
+            }
+            for prefix, key in (
+                ("vs_random", "vs_random"),
+                ("vs_checkpoint_pool", "vs_checkpoint_pool"),
+            ):
+                m = result[key]
+                row.update(
+                    {
+                        f"{prefix}_avg_profit": m["avg_profit"],
+                        f"{prefix}_completed_games": m["completed_games"],
+                        f"{prefix}_invalid_state_games": m["invalid_state_games"],
+                        f"{prefix}_invalid_state_count": m["invalid_state_count"],
+                        f"{prefix}_non_zero_sum_games": m["non_zero_sum_games"],
+                        f"{prefix}_setup_errors": m["setup_errors"],
+                        f"{prefix}_requested_games": m["requested_games"],
+                        f"{prefix}_sanitized_actions": m["sanitized_actions"],
+                        f"{prefix}_agent_actions": m["agent_actions"],
+                        f"{prefix}_agent_fold_actions": m["agent_fold_actions"],
+                        f"{prefix}_agent_check_call_actions": m["agent_check_call_actions"],
+                        f"{prefix}_agent_raise_actions": m["agent_raise_actions"],
+                        f"{prefix}_agent_fold_rate": m["agent_fold_rate"],
+                        f"{prefix}_agent_check_call_rate": m["agent_check_call_rate"],
+                        f"{prefix}_agent_raise_rate": m["agent_raise_rate"],
+                        f"{prefix}_agent_preflop_actions": m["agent_preflop_actions"],
+                        f"{prefix}_agent_preflop_folds": m["agent_preflop_folds"],
+                        f"{prefix}_agent_preflop_fold_rate": m["agent_preflop_fold_rate"],
+                    }
+                )
+            writer.writerow(row)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate Deep CFR checkpoints.")

@@ -49,7 +49,7 @@ def load_models(data: AgentsInfo):
 @app.post("/card-detection", status_code=200)
 def card_detection(data: CardImage):
     if agents is None:
-        raise HTTPException(status_code=400, detail="Models not loaded yet. Call /load-models first.")
+        return HTTPException(status_code=400, detail="Models not loaded yet. Call /load-models first.")
     
     image = np.array(data.image_as_list)
     count = data.count

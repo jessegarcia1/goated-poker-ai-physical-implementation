@@ -7,9 +7,7 @@ To run the poker game:
   python -m scripts.poker_gui --models_folder models/phase1
 
 - CLI:
-  python -m scripts.play --models-dir flagship_models/first OR
-  python -m scripts.play --models-dir models/phase1 OR
-  python -m scripts.play --physical-game True --button-pos 1
+  python -m scripts.play --models-dir models/standard/6_player/checkpoint_mixed
 
 Creating a new pkrs State:
 state = pkrs.State.from_seed(
@@ -31,32 +29,32 @@ Step 1:
 python -m src.training.train \
  --iterations 20000 \
  --traversals 200 \
- --save-dir models/standard/5_player/phase1_20k \
- --log-dir logs/standard/5_player/phase1_20k\
- --num-opponents 4 
+ --save-dir models/standard/2_player/phase1_20k \
+ --log-dir logs/standard/2_player/phase1_20k\
+ --num-opponents 2
 
 Step 2:
 python -m src.training.train \
- --checkpoint models/standard/5_player/phase1_20k/checkpoint_iter_20000.pt \
+ --checkpoint models/standard/2_player/phase1_20k/checkpoint_iter_20000.pt \
  --self-play \
  --iterations 10000 \
  --traversals 400 \
- --save-dir models/standard/5_player/selfplay_from_20000 \
- --log-dir logs/standard/5_player/selfplay_from_20000 \
- --num-opponents 4
+ --save-dir models/standard/2_player/selfplay_from_20000 \
+ --log-dir logs/standard/2_player/selfplay_from_20000 \
+ --num-opponents 2
 
 Step 3:
 python -m src.training.train \
- --checkpoint models/standard/4_player/selfplay_from_20000/selfplay_checkpoint_iter_30000.pt \
+ --checkpoint models/standard/2_player/selfplay_from_20000/selfplay_checkpoint_iter_30000.pt \
  --mixed \
- --checkpoint-dir models/standard/4_player \
+ --checkpoint-dir models/standard/2_player \
  --model-prefix "selfplay_checkpoint_iter" \
  --refresh-interval 1000 \
- --num-opponents 3 \
+ --num-opponents 2 \
  --iterations 10000 \
  --traversals 400 \
- --log-dir logs/standard/4_player/mixed \
- --save-dir models/standard/4_player/mixed
+ --log-dir logs/standard/2_player/mixed \
+ --save-dir models/standard/2_player/mixed
 
 # DeepCFR Poker AI
 

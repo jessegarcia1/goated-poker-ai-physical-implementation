@@ -38,19 +38,28 @@ class Agents:
         # potential_model_paths = [
         #     base_path + '/mixed_checkpoint_iter_36000.pt',
         #     base_path + '/mixed_checkpoint_iter_37000.pt',
-        #     base_path + '/mixed_checkpoint_iter_38000.pt',
         #     base_path + '/mixed_checkpoint_iter_39000.pt',
         #     base_path + '/mixed_checkpoint_iter_40000.pt',
+        #     base_path + '/mixed_checkpoint_iter_38000.pt'
         # ]
         
-        base_path = f"models/standard/{player_num_path}/selfplay_from_20000"
+        base_path = f"models/standard/{player_num_path}/checkpoint_mixed"
         potential_model_paths = [
-            base_path + '/selfplay_checkpoint_iter_26000.pt',
-            base_path + '/selfplay_checkpoint_iter_27000.pt',
-            base_path + '/selfplay_checkpoint_iter_28000.pt',
-            base_path + '/selfplay_checkpoint_iter_29000.pt',
-            base_path + '/selfplay_checkpoint_iter_30000.pt',
+            base_path + '/*checkpoint_iter_mixed_iter_30500.pt',
+            base_path + '/*checkpoint_iter_mixed_iter_30600.pt',
+            base_path + '/*checkpoint_iter_mixed_iter_30700.pt',
+            base_path + '/*checkpoint_iter_mixed_iter_38000.pt',
+            base_path + '/*checkpoint_iter_mixed_iter_40000.pt'
         ]
+        
+        # base_path = f"models/standard/{player_num_path}/selfplay_from_20000"
+        # potential_model_paths = [
+        #     base_path + '/selfplay_checkpoint_iter_26000.pt',
+        #     base_path + '/selfplay_checkpoint_iter_27000.pt',
+        #     base_path + '/selfplay_checkpoint_iter_28000.pt',
+        #     base_path + '/selfplay_checkpoint_iter_29000.pt',
+        #     base_path + '/selfplay_checkpoint_iter_30000.pt',
+        # ]
         
         # base_path = f"models/standard/{player_num_path}/phase1_20k"
         # potential_model_paths = [
@@ -62,7 +71,7 @@ class Agents:
         # ]
 
         # get get only 'num_agents' number of model paths
-        model_paths = potential_model_paths[:self.num_agents]
+        model_paths = potential_model_paths[self.num_agents + 1:]
 
         print(f"Selected {self.num_agents} models for this game:")
         for model_idx, path in enumerate(model_paths):
