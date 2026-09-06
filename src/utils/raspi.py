@@ -51,10 +51,10 @@ class PhysicalGameState:
 def get_serial_gamestate_info(port='/dev/ttyACM0', baudrate=9600, skip=False):
     if skip:
         return PhysicalGameState(
-            num_players=4,
+            num_players=6,
             num_agents=2,
-            initial_stake=10.00,
-            button_pos=1,
+            initial_stake=8.00,
+            button_pos=3,
             small_blind=.25,
             big_blind=.50,
         )
@@ -150,7 +150,7 @@ def card_to_string(card: Card) -> str:
     
     return f"{suits[int(card.suit)]}{ranks[int(card.rank)]}"
 
-def create_state_json_payload(state: State, n_players: int, seed: int) -> dict:
+def create_state_json_payload(state: State, n_players: int, seed: int, verbose:bool=False) -> dict:
     """
         Create a json parsable payload of a State that can be sent via FastAPI.
         
@@ -205,7 +205,8 @@ def create_state_json_payload(state: State, n_players: int, seed: int) -> dict:
         "seed": seed
     }
     
-    print(payload)
+    if verbose:
+        print(payload)
     
     return payload
 

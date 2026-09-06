@@ -98,7 +98,7 @@ def raise_bounds(state) -> RaiseBounds:
     current_bet = float(player_state.bet_chips)
     available_stake = float(player_state.stake)
     call_amount = max(0.0, float(state.min_bet) - current_bet)
-    max_raise = max(0.0, available_stake - call_amount)
+    max_raise = max(0.0, available_stake) # make max raise just be call amount
     return RaiseBounds(
         call_amount=call_amount,
         min_raise=min_raise_increment(state),
@@ -144,7 +144,10 @@ def build_raise_action(
 
     additional_amount = float(additional_amount)
     if bounds.can_raise:
-        additional_amount = min(max(additional_amount, bounds.min_raise), bounds.max_raise)
+        # Changed it from min(max(additional_amount, min_raise), bounds.max_raise)
+        # I feel that the additional amount should not be replaced by the min raise if you
+        # want to just raise 50 cents.
+        additional_amount = min(additional_amount, bounds.max_raise) 
     else:
         additional_amount = min(max(0.0, additional_amount), bounds.max_raise)
 
@@ -153,11 +156,12 @@ def build_raise_action(
     if total_commit > bounds.available_stake + epsilon:
         additional_amount = max(0.0, bounds.available_stake - bounds.call_amount)
 
-    if additional_amount + epsilon < bounds.min_raise and not strict:
+    if total_commit + epsilon < bounds.min_raise and not strict:
+        print("Total commit below minimum legal: ", total_commit)
         return safe_fallback_action(
             state.legal_actions,
             reason="Raise requested below the minimum legal raise",
-            attempted_action=pkrs.Action(pkrs.ActionEnum.Raise, additional_amount),
+            attempted_action=pkrs.Action(pkrs.ActionEnum.Raise, total_commit),
             fallback_recorder=fallback_recorder,
         )
 

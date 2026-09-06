@@ -1,5 +1,6 @@
 from gpiozero import LED, Button
 from time import sleep
+import time
 
 STEP_DELAY = 0.0000008
 STEPS_PER_CHIP = 680
@@ -14,6 +15,10 @@ LIMIT_SWITCH_PIN = 15
 # pot motor always uses these pins
 POT_PINS = (17, 27, 22)
 
+# Button is input device
+CHECK_CALL = Button(13, pull_up=True)
+RAISE = Button(20, pull_up=True)
+FOLD = Button(12, pull_up=True)
 
 def LEFT(direction):
     direction.on()
@@ -167,13 +172,13 @@ def move_pot(high:bool):
             print("Moving pot Right (Up)...")
             RIGHT(direction_pin)
 
-            move(step_pin, 6000, POT_STEP_DELAY)
+            move(step_pin, 5000, POT_STEP_DELAY)
 
         if not high:
             print("Moving pot Left (Down)...")
             LEFT(direction_pin)
 
-            move(step_pin, 6000, POT_STEP_DELAY)
+            move(step_pin, 5000, POT_STEP_DELAY)
         #move(step_pin, 15000, POT_STEP_DELAY)
 
     finally:
@@ -181,7 +186,6 @@ def move_pot(high:bool):
         direction_pin.close()
         step_pin.close()
         limit_switch.close()
-
 
 def test_buttons():
     limit_switch = Button(LIMIT_SWITCH_PIN, pull_up=True, bounce_time=0.05)
@@ -197,11 +201,64 @@ def test_buttons():
     finally:
         limit_switch.close()
 
+pending_action = None
+
+def return_check_call():
+    global pending_action
+    pending_action = "check"
+
+def return_raise():
+    global pending_action
+    pending_action = "raise"
+
+def return_fold():
+    global pending_action
+    pending_action = "fold"
+
+CHECK_CALL.when_pressed = return_check_call
+RAISE.when_pressed = return_raise
+FOLD.when_pressed = return_fold
+
+def wait_for_player_action():
+    start_time = time.time()
+    print("Waiting for player action...")
+    while True:
+        if time.time() - start_time >= 30:
+            return None
+        if CHECK_CALL.is_pressed:
+            time.sleep(.5)
+            if CHECK_CALL.is_pressed:
+                return "check"
+        elif RAISE.is_pressed:
+            time.sleep(.5)
+            if RAISE.is_pressed:
+                return "raise"
+        elif FOLD.is_pressed:
+            time.sleep(.5)
+            if FOLD.is_pressed:
+                return "fold"
+
+        sleep(0.05)
+
+def test_buttons():
+    while True:
+        if CHECK_CALL.is_pressed:
+            print("check")
+        elif RAISE.is_pressed:
+            print("raise")
+        elif FOLD.is_pressed:
+            print("fold")
+        else:
+            print("None")
+        sleep(0.05)
+        
+
 if __name__ == '__main__':
     try:
         # dispense(15, 1)
         #homing_sequence(agent_num=1)
-        # move_pot(high=False)
+        move_pot(high=True)
+        # wait_for_player_action()
         # dispense(num_dispensed=3, agent_num=1)
         pass
 

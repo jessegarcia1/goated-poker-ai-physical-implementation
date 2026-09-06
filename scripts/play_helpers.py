@@ -3,11 +3,11 @@ import pokers as pkrs
 import time
 
 from src.utils.actions import build_raise_action, preset_raise_action, raise_bounds
-from scripts.raspi_gpio_scripts.get_player_action import wait_for_player_action
+from scripts.raspi_gpio_scripts.handle_chips_and_actions import wait_for_player_action
 from src.utils.raspi import get_serial_pot_amount
 from src.routes.hooks import text_to_speech_hook
 
-def get_action_description(action):
+def get_action_description(action, bounds, bet_chips):
     """Convert a pokers action to a human-readable string."""
     if action.action == pkrs.ActionEnum.Fold:
         return "Fold"
@@ -16,7 +16,7 @@ def get_action_description(action):
     elif action.action == pkrs.ActionEnum.Call:
         return "Call"
     elif action.action == pkrs.ActionEnum.Raise:
-        return f"Raise to {action.amount:.2f}"
+        return f"Raise to {action.amount + bounds.call_amount + bet_chips:.2f}"
     else:
         return f"Unknown action: {action.action}"
 
@@ -28,7 +28,7 @@ def card_to_string(card):
     
     return f"{ranks[int(card.rank)]}{suits[int(card.suit)]}"
 
-def display_game_state(state, player_id=0, human_positions=None):
+def display_game_state(state, player_id=0, human_positions=None, hide_hands=True):
     """Display the current game state in a human-readable format."""
     print("\n" + "="*70)
     
@@ -51,8 +51,9 @@ def display_game_state(state, player_id=0, human_positions=None):
     print(f"Community cards: {community_cards if community_cards else 'None'}")
     
     # Show player's hand
-    hand = " ".join([card_to_string(card) for card in state.players_state[player_id].hand])
-    print(f"Your hand: {hand}")
+    # if not hide_hands:
+    #     hand = " ".join([card_to_string(card) for card in state.players_state[player_id].hand])
+    #     print(f"Your hand: {hand}")
     
     # Show all players' states
     print("\nPlayers:")
@@ -129,12 +130,11 @@ def get_human_action(state, player_id=0):
         
         print("Invalid action. Please try again.")
         
-def get_human_action_physical_game(state, player_id:int=0):
+def get_human_action_physical_game(state, bet_chips, player_id:int=0):
     """Get action from human player via console input."""
     
     while True:
         action_input = wait_for_player_action()
-        print(state.legal_actions)
         # Process fold
         if action_input == 'fold' and pkrs.ActionEnum.Fold in state.legal_actions:
             return pkrs.Action(pkrs.ActionEnum.Fold)
@@ -160,9 +160,13 @@ def get_human_action_physical_game(state, player_id:int=0):
             # it will at least be double the original bet. I will fix this in this version of the function.
             bounds = raise_bounds(state)
             amount = get_serial_pot_amount()
-            additional_amount = amount - bounds.min_raise 
+            additional_amount = amount - bounds.call_amount 
             if bounds.min_raise <= amount <= bounds.max_raise:
-                return build_raise_action(state, additional_amount)
+                # handle re-raises with bet chips
+                raise_action = build_raise_action(state, additional_amount)
+                raise_action_additional_amount = raise_action.amount - bet_chips
+                raise_action.amount = raise_action_additional_amount
+                return raise_action
             else:
                 print(f"Amount must be between {bounds.min_raise:.2f} and {bounds.max_raise:.2f}")
                 text_to_speech_hook(f"Amount must be between {bounds.min_raise:.2f} and {bounds.max_raise:.2f}", sleep=6)
@@ -173,4 +177,6 @@ def get_human_action_physical_game(state, player_id:int=0):
         text_to_speech_hook("Confirm you have removed you chips from the pot...", skip=True)
         wait_for_player_action()
         # tare after invalid action
+        print("Taring after invalid action...")
+        get_serial_pot_amount()
         get_serial_pot_amount(tare=True)
